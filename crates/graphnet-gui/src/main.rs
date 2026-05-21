@@ -99,6 +99,10 @@ struct App {
     console_input: String,
     /// Console history of (command, output) lines.
     console_history: Vec<(String, String)>,
+    /// Timestamp of the user's last input action (key/click/forward).
+    last_user_action: std::time::Instant,
+    /// Currently-active adaptive-tutorial hint (None if no hint).
+    adaptive_hint: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -531,6 +535,8 @@ impl App {
             show_console: false,
             console_input: String::new(),
             console_history: Vec::new(),
+            last_user_action: std::time::Instant::now(),
+            adaptive_hint: None,
         };
         app.load_template("standard");
         // Try to restore previous session.
@@ -724,6 +730,35 @@ impl App {
 
     fn arch_summary(&self) -> ArchSummary {
         self.stack.arch_summary()
+    }
+
+    /// Compute the appropriate adaptive hint based on the user's current
+    /// idle time + state. Returns None if no hint applies.
+    fn compute_adaptive_hint(&self) -> Option<&'static str> {
+        let idle = self.last_user_action.elapsed().as_secs();
+        if idle < 30 {
+            return None; // user is active
+        }
+        // Most-specific cases first.
+        if self.stack.is_empty() {
+            return Some("Stack is empty — press '+ New…' or any number 1-9 to load a template");
+        }
+        if self.forwards == 0 {
+            return Some("Press SPACE (or click ▶ Run forward) to execute the stack");
+        }
+        if !self.show_help && self.forwards < 3 {
+            return Some("Stuck? Press H for help, or backtick (\\`) for the console");
+        }
+        if !self.live && self.forwards >= 10 {
+            return Some("Try LIVE mode — press L to run forward continuously");
+        }
+        if self.op_kinds_seen.len() < 5 && self.forwards >= 5 {
+            return Some("You haven't tried every op kind yet — press A/D/F/P/N to add one");
+        }
+        if self.templates_seen.len() < TEMPLATES.len() && self.forwards >= 20 {
+            return Some("Try another template — press '+ New…' or 1-0 to browse");
+        }
+        None
     }
 
     fn run_forward(&mut self) {
@@ -1262,6 +1297,13 @@ impl eframe::App for App {
         let mut undo_request = false;
         let mut redo_request = false;
         let mut png_request = false;
+        let any_input = ctx.input(|i| {
+            i.keys_down.iter().count() > 0 || i.pointer.any_down() || i.pointer.is_moving()
+        });
+        if any_input {
+            self.last_user_action = std::time::Instant::now();
+        }
+        self.adaptive_hint = self.compute_adaptive_hint();
         ctx.input(|i| {
             if i.key_pressed(egui::Key::Space) {
                 self.run_forward();
@@ -1519,6 +1561,39 @@ impl eframe::App for App {
         if self.last_sample_at.elapsed().as_millis() > 750 {
             self.last_sample = Some(self.resource_monitor.sample());
             self.last_sample_at = std::time::Instant::now();
+        }
+
+        // Adaptive hint banner (#719) — only when stuck.
+        if let Some(hint) = self.adaptive_hint {
+            egui::TopBottomPanel::top("adaptive_hint")
+                .frame(
+                    egui::Frame::none()
+                        .fill(theme::ACCENT_PURPLE.gamma_multiply(0.25))
+                        .inner_margin(egui::Margin::symmetric(theme::SPACE_LG, theme::SPACE_SM))
+                        .stroke(egui::Stroke::new(1.0, theme::ACCENT_PURPLE)),
+                )
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new("💡")
+                                .size(theme::SIZE_BODY)
+                                .color(theme::ACCENT_PURPLE),
+                        );
+                        ui.label(
+                            egui::RichText::new(hint)
+                                .size(theme::SIZE_SMALL)
+                                .color(theme::TEXT_PRIMARY),
+                        );
+                        ui.with_layout(
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                if ui.button("×").clicked() {
+                                    self.last_user_action = std::time::Instant::now();
+                                }
+                            },
+                        );
+                    });
+                });
         }
 
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
