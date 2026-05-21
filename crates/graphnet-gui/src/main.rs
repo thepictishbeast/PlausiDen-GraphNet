@@ -1245,12 +1245,20 @@ impl eframe::App for App {
                 ui.add_space(theme::SPACE_MD);
                 section_heading(ui, "Dim");
                 ui.add_space(theme::SPACE_XS);
-                ui.label(
-                    egui::RichText::new(format!("{}", self.dim_slider))
-                        .size(theme::SIZE_BODY)
-                        .color(theme::TEXT_PRIMARY)
-                        .strong(),
-                );
+                // DragValue allows BOTH drag AND typing the literal number.
+                let mut typed_value = self.dim_slider;
+                ui.horizontal(|ui| {
+                    let drag_resp = ui.add(
+                        egui::DragValue::new(&mut typed_value)
+                            .range(256..=16_384)
+                            .speed(50.0)
+                            .suffix(" dims"),
+                    );
+                    if drag_resp.drag_stopped() || drag_resp.lost_focus() {
+                        self.set_dim(typed_value);
+                    }
+                });
+                self.dim_slider = typed_value;
                 let mut slider_value = self.dim_slider;
                 let slider_resp = ui.add(
                     egui::Slider::new(&mut slider_value, 256..=16_384)
@@ -1263,7 +1271,7 @@ impl eframe::App for App {
                     self.set_dim(self.dim_slider);
                 }
                 ui.label(
-                    egui::RichText::new("(drag-and-release to apply; stack clears)")
+                    egui::RichText::new("(drag, scroll, or type — release to apply)")
                         .size(theme::SIZE_TINY)
                         .color(theme::TEXT_DIM),
                 );
@@ -2093,11 +2101,15 @@ fn section_heading(ui: &mut egui::Ui, text: &str) {
 
 fn metric(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.horizontal(|ui| {
-        ui.label(
+        let label_resp = ui.label(
             egui::RichText::new(label)
                 .color(theme::TEXT_MUTED)
                 .size(theme::SIZE_SMALL),
         );
+        // Show ⓘ info tooltip for AI/HDC terms.
+        if let Some(info) = ai_term_info(label) {
+            label_resp.on_hover_text(info);
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(
                 egui::RichText::new(value)
@@ -2107,6 +2119,64 @@ fn metric(ui: &mut egui::Ui, label: &str, value: &str) {
             );
         });
     });
+}
+
+/// Returns a plain-English explanation for an AI/HDC term, if known.
+fn ai_term_info(label: &str) -> Option<&'static str> {
+    let l = label.trim().to_lowercase();
+    if l.contains("cos_sim") {
+        return Some(
+            "Cosine similarity — angle between two hypervectors.\n\
+             +1.0  = identical direction\n\
+              0.0  = orthogonal (uncorrelated, the HDC norm for random pairs)\n\
+             -1.0  = opposite direction (negate)",
+        );
+    }
+    if l.contains("hamming") {
+        return Some(
+            "Hamming distance — fraction of components that differ between\n\
+             two bipolar hypervectors. 0.0 = identical, 0.5 = uncorrelated,\n\
+             1.0 = pure negation.",
+        );
+    }
+    if l.contains("dim") {
+        return Some(
+            "Dimensionality — number of components in each hypervector.\n\
+             HDC capacity grows with D. 10,000 is a typical default;\n\
+             1,024 is FFT-friendly for HrrBind; 16,384 for max capacity.",
+        );
+    }
+    if l.contains("bits differ") {
+        return Some(
+            "How many positions changed sign between input and bundled output.\n\
+             For uncorrelated random hypervectors this hovers near dim/2.",
+        );
+    }
+    if l.contains("mean |value|") {
+        return Some(
+            "Mean magnitude across components. Pure bipolar = 1.0; the FFT-based\n\
+             HrrBind path can produce slightly off values due to re-quantization.",
+        );
+    }
+    if l.contains("family") {
+        return Some(
+            "Architecture family. 'stack' = heterogeneous bundle of ops on a\n\
+             shared hypervector. Stack-of-stacks recursion lands in PlausiDen-Stack.",
+        );
+    }
+    if l.contains("ops") || l == "op" || l.contains("operation") {
+        return Some(
+            "Number of operations in this Stack. Each op transforms the input\n\
+             hypervector independently; the bundle is their majority sum.",
+        );
+    }
+    if l.contains("latency") {
+        return Some("Wall-clock time to run one forward pass through this Stack.")
+    }
+    if l.contains("forwards") {
+        return Some("How many times you've run the Stack since launch.")
+    }
+    None
 }
 
 fn card(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
