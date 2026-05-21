@@ -2,8 +2,8 @@
 
 This Python facade re-exports the PyO3-built native extension as the
 `graphnet` namespace. The native module ships from `crates/graphnet-bindings`
-via maturin; until Phase 2 lands the native module may not be installed in
-which case stubs raise NotImplementedError.
+via maturin; until the native module is installed the facade raises
+NotImplementedError for native calls but still exposes `__version__`.
 
 See ``docs/PLAN.md`` (project root) for the full design plan.
 """
@@ -14,6 +14,20 @@ __version__ = "0.1.0"
 
 try:
     from graphnet._graphnet_native import (  # type: ignore[import-not-found]
+        ForwardTrace,
+        Hypervector,
+        Operation,
+        OperationOutput,
+        Stack,
+        bind,
+        bundle,
+        cos_sim,
+        hamming,
+        restore,
+        snapshot,
+        unbind,
+    )
+    from graphnet._graphnet_native import (
         banner as _native_banner,
     )
     from graphnet._graphnet_native import (
@@ -23,6 +37,18 @@ try:
     _NATIVE_AVAILABLE = True
 except ImportError:  # pragma: no cover - exercised when native lib is missing
     _NATIVE_AVAILABLE = False
+    Hypervector = None  # type: ignore[assignment, misc]
+    Operation = None  # type: ignore[assignment, misc]
+    Stack = None  # type: ignore[assignment, misc]
+    ForwardTrace = None  # type: ignore[assignment, misc]
+    OperationOutput = None  # type: ignore[assignment, misc]
+    bind = None  # type: ignore[assignment]
+    unbind = None  # type: ignore[assignment]
+    bundle = None  # type: ignore[assignment]
+    cos_sim = None  # type: ignore[assignment]
+    hamming = None  # type: ignore[assignment]
+    snapshot = None  # type: ignore[assignment]
+    restore = None  # type: ignore[assignment]
 
 
 def banner() -> str:
@@ -42,4 +68,26 @@ def version() -> str:
     return _native_version()
 
 
-__all__ = ["__version__", "banner", "version"]
+def native_available() -> bool:
+    """Return True if the PyO3-built native extension is importable."""
+    return _NATIVE_AVAILABLE
+
+
+__all__ = [
+    "ForwardTrace",
+    "Hypervector",
+    "Operation",
+    "OperationOutput",
+    "Stack",
+    "__version__",
+    "banner",
+    "bind",
+    "bundle",
+    "cos_sim",
+    "hamming",
+    "native_available",
+    "restore",
+    "snapshot",
+    "unbind",
+    "version",
+]

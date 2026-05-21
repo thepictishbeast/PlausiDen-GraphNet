@@ -412,7 +412,9 @@ dependencies = [
 name = "graphnet-bindings"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "graphnet-engine",
+ "plausiden-hdc",
  "pyo3",
  "thiserror 1.0.69",
 ]

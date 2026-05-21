@@ -73,7 +73,10 @@ jobs:
       - name: ruff check
         run: ruff check python/
 
-      - name: pytest (source-only, native ext not required)
+      - name: build native extension with maturin
+        run: maturin develop --release
+
+      - name: pytest (includes native bindings tests)
         run: pytest python/tests/ -q
 
   audit:

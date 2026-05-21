@@ -6,15 +6,17 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "GraphNet Python bindings (PyO3 0.22)"
+description = "GraphNet Python bindings (PyO3 0.24)"
 
 [lib]
-name = "graphnet"
+name = "_graphnet_native"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 graphnet-engine = { path = "../graphnet-engine" }
+plausiden-hdc = { git = "https://github.com/thepictishbeast/PlausiDen-Stack", rev = "d2207b2085c0815950e3411365c0c7ecf80e5636" }
 pyo3 = { version = "0.24", features = ["extension-module", "abi3-py310"] }
+bincode = { workspace = true }
 thiserror.workspace = true
 
 [lints.rust]
