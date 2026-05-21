@@ -8,7 +8,8 @@ mod theme;
 
 use eframe::egui;
 use graphnet_engine::{
-    stack_from_yaml, stack_to_yaml, ArchSummary, ForwardTrace, Model, Operation, Stack,
+    flop_estimate, stack_from_yaml, stack_to_yaml, ArchSummary, ForwardTrace, Model, Operation,
+    ResourceMonitor, ResourceSample, Stack,
 };
 use plausiden_hdc::{cos_sim, hamming, Hypervector};
 
@@ -73,6 +74,10 @@ struct App {
     redo_stack: Vec<Stack>,
     /// Template search filter (#717).
     template_filter: String,
+    /// Live host CPU / RAM monitor.
+    resource_monitor: ResourceMonitor,
+    last_sample: Option<ResourceSample>,
+    last_sample_at: std::time::Instant,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -332,6 +337,9 @@ impl App {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             template_filter: String::new(),
+            resource_monitor: ResourceMonitor::new(),
+            last_sample: None,
+            last_sample_at: std::time::Instant::now(),
         };
         app.load_template("standard");
         // Try to restore previous session.
@@ -920,17 +928,39 @@ impl eframe::App for App {
                 });
             });
 
+        // Sample CPU / RAM every 750ms (sysinfo is moderately expensive).
+        if self.last_sample_at.elapsed().as_millis() > 750 {
+            self.last_sample = Some(self.resource_monitor.sample());
+            self.last_sample_at = std::time::Instant::now();
+        }
+
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             ui.horizontal(|ui| {
+                let flops = flop_estimate(self.dim, self.stack.len());
+                let (cpu_txt, ram_txt) = if let Some(s) = &self.last_sample {
+                    (
+                        format!("{:.0}%", s.host_cpu_load * 100.0),
+                        format!("{} MB", s.proc_ram_used / 1024 / 1024),
+                    )
+                } else {
+                    ("—".to_string(), "—".to_string())
+                };
                 ui.label(
                     egui::RichText::new(format!(
-                        "● template: {}   ·   dim: {}   ·   ops: {}",
+                        "● template: {}  ·  dim: {}  ·  ops: {}  ·  fwd FLOPs: {flops:.2e}",
                         self.template,
                         self.dim,
                         self.stack.len()
                     ))
                     .size(theme::SIZE_SMALL)
                     .color(theme::TEXT_MUTED),
+                );
+                ui.add_space(theme::SPACE_MD);
+                ui.label(
+                    egui::RichText::new(format!("CPU {cpu_txt}  ·  RAM {ram_txt}"))
+                        .size(theme::SIZE_SMALL)
+                        .color(theme::ACCENT_BLUE)
+                        .monospace(),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let latency = self
