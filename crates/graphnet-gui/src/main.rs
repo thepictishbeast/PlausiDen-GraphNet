@@ -89,6 +89,8 @@ struct App {
     objective_done: Vec<bool>,
     /// Colormap for hypervector heatmaps (#710).
     colormap: Colormap,
+    /// Show the templates popup modal? (#745)
+    show_templates_popup: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -516,6 +518,7 @@ impl App {
             current_objective: 0,
             objective_done: vec![false; OBJECTIVES.len()],
             colormap: Colormap::Bipolar,
+            show_templates_popup: false,
         };
         app.load_template("standard");
         // Try to restore previous session.
@@ -1640,9 +1643,38 @@ impl eframe::App for App {
                     );
                     return;
                 }
-                section_heading(ui, "Example configs");
+                ui.horizontal(|ui| {
+                    section_heading(ui, "Templates");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if mini_button(ui, "+ New…", theme::ACCENT_MID).clicked() {
+                            self.show_templates_popup = true;
+                        }
+                    });
+                });
                 ui.add_space(theme::SPACE_SM);
-                // Template search filter (#717).
+                // Compact "current" indicator instead of full list.
+                card(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(format!("● {}", self.template))
+                            .size(theme::SIZE_BODY)
+                            .color(theme::ACCENT_BLUE)
+                            .strong(),
+                    );
+                    let summary = TEMPLATES
+                        .iter()
+                        .find(|t| t.name == self.template)
+                        .map(|t| t.summary)
+                        .unwrap_or("custom");
+                    ui.label(
+                        egui::RichText::new(summary)
+                            .size(theme::SIZE_SMALL)
+                            .color(theme::TEXT_MUTED),
+                    );
+                });
+                // Compact-list also kept (for keyboard 1-0 + clarity), but
+                // shrunk to one row with chevron expand.
+                ui.add_space(theme::SPACE_XS);
+                // Template search filter (#717) — only when explicitly typed.
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new("🔍")
@@ -1651,7 +1683,7 @@ impl eframe::App for App {
                     );
                     ui.add(
                         egui::TextEdit::singleline(&mut self.template_filter)
-                            .hint_text("filter…")
+                            .hint_text("filter… (or click + New)")
                             .desired_width(ui.available_width()),
                     );
                 });
@@ -1661,10 +1693,10 @@ impl eframe::App for App {
                     .iter()
                     .enumerate()
                     .filter(|(_, t)| {
-                        filter.is_empty()
-                            || t.name.to_lowercase().contains(&filter)
-                            || t.summary.to_lowercase().contains(&filter)
-                            || t.explanation.to_lowercase().contains(&filter)
+                        !filter.is_empty()
+                            && (t.name.to_lowercase().contains(&filter)
+                                || t.summary.to_lowercase().contains(&filter)
+                                || t.explanation.to_lowercase().contains(&filter))
                     })
                     .collect();
                 for (i, template) in filtered.iter().map(|(i, t)| (*i, *t)) {
@@ -1901,6 +1933,104 @@ impl eframe::App for App {
                     self.reset_stack();
                 }
             });
+
+        // Templates popup modal (#745).
+        if self.show_templates_popup {
+            let mut load: Option<&'static str> = None;
+            let mut close = false;
+            egui::Window::new("Choose a template")
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .collapsible(false)
+                .resizable(true)
+                .default_size([720.0, 520.0])
+                .frame(
+                    egui::Frame::none()
+                        .fill(theme::BG_CARD)
+                        .stroke(egui::Stroke::new(1.5, theme::ACCENT_PURPLE))
+                        .rounding(egui::Rounding::same(theme::RADIUS_LG))
+                        .inner_margin(egui::Margin::same(theme::SPACE_LG)),
+                )
+                .show(ctx, |ui| {
+                    ui.label(
+                        egui::RichText::new("Start a new experiment")
+                            .size(theme::SIZE_H1)
+                            .color(theme::ACCENT_BLUE)
+                            .strong(),
+                    );
+                    ui.add_space(theme::SPACE_XS);
+                    ui.label(
+                        egui::RichText::new("Pick a template or start from a blank stack.")
+                            .size(theme::SIZE_SMALL)
+                            .color(theme::TEXT_MUTED),
+                    );
+                    ui.add_space(theme::SPACE_MD);
+                    egui::ScrollArea::vertical()
+                        .max_height(380.0)
+                        .show(ui, |ui| {
+                            // Blank stack option as first card.
+                            let blank = ui.add(
+                                egui::Button::new(
+                                    egui::RichText::new("⬚  Blank stack\nStart from nothing — add ops manually.")
+                                        .size(theme::SIZE_SMALL)
+                                        .color(theme::TEXT_PRIMARY),
+                                )
+                                .fill(theme::BG_CARD_HOVER)
+                                .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
+                                .rounding(egui::Rounding::same(theme::RADIUS_MD))
+                                .min_size(egui::vec2(ui.available_width(), 50.0)),
+                            );
+                            if blank.clicked() {
+                                load = Some("__blank__");
+                            }
+                            ui.add_space(theme::SPACE_SM);
+                            for (i, template) in TEMPLATES.iter().enumerate() {
+                                let card = ui.add(
+                                    egui::Button::new(
+                                        egui::RichText::new(format!(
+                                            "{}.  {}\n{}\n\n{}",
+                                            i + 1,
+                                            template.name,
+                                            template.summary,
+                                            template.explanation,
+                                        ))
+                                        .size(theme::SIZE_SMALL)
+                                        .color(theme::TEXT_PRIMARY),
+                                    )
+                                    .fill(theme::BG_CARD_HOVER)
+                                    .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
+                                    .rounding(egui::Rounding::same(theme::RADIUS_MD))
+                                    .min_size(egui::vec2(ui.available_width(), 84.0)),
+                                );
+                                if card.clicked() {
+                                    load = Some(template.name);
+                                }
+                                ui.add_space(theme::SPACE_XS);
+                            }
+                        });
+                    ui.add_space(theme::SPACE_MD);
+                    ui.horizontal(|ui| {
+                        if ui.button("Close").clicked() {
+                            close = true;
+                        }
+                    });
+                });
+            if let Some(name) = load {
+                if name == "__blank__" {
+                    self.push_undo();
+                    self.template = "blank";
+                    self.stack = Stack::new(self.dim);
+                    self.set_status("loaded blank stack".to_string());
+                } else {
+                    self.load_template(name);
+                }
+                self.show_templates_popup = false;
+            }
+            if close
+                || ctx.input(|i| i.key_pressed(egui::Key::Escape))
+            {
+                self.show_templates_popup = false;
+            }
+        }
 
         // Walkthrough overlay — first-run tutorial.
         if let Some(step) = self.walkthrough_step {
