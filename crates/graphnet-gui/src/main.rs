@@ -734,6 +734,85 @@ impl App {
         }
     }
 
+    /// Generate context-aware hints based on current state.
+    fn smart_suggestions(&self) -> Vec<String> {
+        let mut hints = Vec::new();
+        // Count op kinds.
+        let mut counts: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
+        for op in self.stack.operations() {
+            *counts.entry(op.tag()).or_insert(0) += 1;
+        }
+        // Suggest diversity if one kind dominates.
+        if let Some((dominant, &count)) = counts.iter().max_by_key(|&(_, c)| *c) {
+            if count >= 4 && self.stack.len() >= 4 {
+                let missing: Vec<&str> = ["identity", "dense", "hrr_bind", "permute", "negate"]
+                    .iter()
+                    .copied()
+                    .filter(|k| !counts.contains_key(k))
+                    .collect();
+                if !missing.is_empty() {
+                    hints.push(format!(
+                        "Stack has {count}× {dominant} — try adding {} for diversity",
+                        missing[0]
+                    ));
+                }
+            }
+        }
+        // High cos_sim ⇒ stack is mostly a pass-through.
+        if let Some(s) = self.last_cos_sim {
+            if s > 0.85 {
+                hints.push(format!(
+                    "cos_sim {s:+.2} — output is close to input. \
+                     Add hrr_bind or dense to decorrelate."
+                ));
+            }
+        }
+        // Latency budget.
+        if let Some(ms) = self.last_latency_ms {
+            if ms > 16.0 {
+                hints.push(format!(
+                    "Last forward took {ms:.1} ms (>16 ms = below 60 fps). \
+                     Drop dim or remove ops for live mode."
+                ));
+            }
+        }
+        // Empty stack.
+        if self.stack.is_empty() {
+            hints.push(
+                "Stack is empty. Pick a template (1-9) or click an + Add button.".to_string(),
+            );
+        }
+        // Suggest a feature not yet used.
+        if self.forwards >= 3 && !self.live {
+            hints.push("Press L to start live continuous mode — watch the FPS counter.".to_string());
+        }
+        if self.forwards >= 5 && !self.achievements.contains_key("all_op_kinds") {
+            let missing: Vec<&str> = ["identity", "dense", "hrr_bind", "permute", "negate"]
+                .iter()
+                .copied()
+                .filter(|k| !self.op_kinds_seen.contains(*k))
+                .collect();
+            if !missing.is_empty() {
+                hints.push(format!(
+                    "You haven't tried op kind {} yet — add one to unlock 🎭 Generalist",
+                    missing[0]
+                ));
+            }
+        }
+        hints
+    }
+
+    /// Get the key hypervector of a Dense/HrrBind op (if any).
+    fn op_key(&self, idx: usize) -> Option<Hypervector> {
+        let op = self.stack.operations().get(idx)?;
+        match op {
+            Operation::Dense { key } => Some(key.clone()),
+            Operation::HrrBind { key } => Some(key.clone()),
+            _ => None,
+        }
+    }
+
     /// Check criteria after a forward / mutation and unlock anything new.
     fn check_achievements(&mut self) {
         // Record state into tracking sets.
@@ -1429,12 +1508,14 @@ impl eframe::App for App {
                 let mut drag_drop_target: Option<usize> = None;
                 let drag_active = self.drag_source.is_some();
                 for (idx, tag) in &ops {
+                    let key_preview = self.op_key(*idx);
                     let action = op_chip_actions_with_drag(
                         ui,
                         *idx,
                         tag,
                         self.drag_source == Some(*idx),
                         drag_active,
+                        key_preview.as_ref(),
                     );
                     if action.remove {
                         to_remove = Some(*idx);
@@ -1798,6 +1879,31 @@ impl eframe::App for App {
                                 }
                             }
                         });
+
+                        // Smart suggestions — context-aware hints (#709).
+                        let hints = self.smart_suggestions();
+                        if !hints.is_empty() {
+                            ui.add_space(theme::SPACE_LG);
+                            section_heading(ui, "💡 Suggestions");
+                            ui.add_space(theme::SPACE_SM);
+                            card(ui, |ui| {
+                                for hint in &hints {
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.label(
+                                            egui::RichText::new("•")
+                                                .size(theme::SIZE_BODY)
+                                                .color(theme::ACCENT_PURPLE),
+                                        );
+                                        ui.label(
+                                            egui::RichText::new(hint)
+                                                .size(theme::SIZE_SMALL)
+                                                .color(theme::TEXT_PRIMARY),
+                                        );
+                                    });
+                                    ui.add_space(theme::SPACE_XS);
+                                }
+                            });
+                        }
 
                         if !self.cos_sim_history.is_empty() {
                             ui.add_space(theme::SPACE_LG);
@@ -2419,6 +2525,7 @@ fn op_chip_actions_with_drag(
     tag: &str,
     is_being_dragged: bool,
     drag_active: bool,
+    key_preview: Option<&Hypervector>,
 ) -> OpChipAction {
     let mut action = OpChipAction::default();
     let bg = theme::op_color(tag).gamma_multiply(if is_being_dragged { 0.6 } else { 0.25 });
@@ -2495,6 +2602,35 @@ fn op_chip_actions_with_drag(
             egui::Rounding::same(theme::RADIUS_PILL),
             egui::Stroke::new(2.0, theme::ACCENT_PURPLE),
         );
+    }
+    // Hover → show key preview popup for keyed ops (#712).
+    if let Some(key) = key_preview {
+        if row_resp.hovered() || resp.hovered() {
+            egui::show_tooltip_for(
+                ui.ctx(),
+                egui::LayerId::new(
+                    egui::Order::Tooltip,
+                    egui::Id::new(("op_chip_tip", idx)),
+                ),
+                egui::Id::new(("op_chip_tip", idx)),
+                &resp.rect,
+                |ui| {
+                    ui.set_max_width(220.0);
+                    ui.label(
+                        egui::RichText::new(format!("[{idx}] {tag} key"))
+                            .size(theme::SIZE_SMALL)
+                            .color(theme::ACCENT_BLUE)
+                            .strong(),
+                    );
+                    hypervector_heatmap(ui, key, 32, 4.0);
+                    ui.label(
+                        egui::RichText::new(format!("D = {}", key.dim()))
+                            .size(theme::SIZE_TINY)
+                            .color(theme::TEXT_MUTED),
+                    );
+                },
+            );
+        }
     }
     action
 }
