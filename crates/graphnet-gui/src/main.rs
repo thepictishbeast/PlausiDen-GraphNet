@@ -83,7 +83,72 @@ struct App {
     /// Tracking sets for achievement criteria.
     op_kinds_seen: std::collections::HashSet<String>,
     templates_seen: std::collections::HashSet<String>,
+    /// Index of the current active objective (0..OBJECTIVES.len()).
+    current_objective: usize,
+    /// Whether each objective is completed (parallel to OBJECTIVES).
+    objective_done: Vec<bool>,
 }
+
+/// One challenge in the objectives catalog (#720).
+struct Objective {
+    title: &'static str,
+    description: &'static str,
+    /// Function that takes the App state and returns `true` if complete.
+    check: fn(&App) -> bool,
+}
+
+const OBJECTIVES: &[Objective] = &[
+    Objective {
+        title: "1. First Contact",
+        description: "Press Space (or click ▶ Run forward) to run your first forward.",
+        check: |a| a.forwards >= 1,
+    },
+    Objective {
+        title: "2. Add an Op",
+        description: "Add any operation to the stack via + Identity / + Dense / + HrrBind / + Permute / + Negate.",
+        check: |a| a.stack.len() > 3, // standard template has 3 ops
+    },
+    Objective {
+        title: "3. Try HrrBind",
+        description: "Use the FFT-based hrr_bind operation — load fft-heavy (3) or add it manually.",
+        check: |a| a.op_kinds_seen.contains("hrr_bind"),
+    },
+    Objective {
+        title: "4. Five Forwards",
+        description: "Run forward five times. Watch the cos_sim history sparkline build up.",
+        check: |a| a.forwards >= 5,
+    },
+    Objective {
+        title: "5. Live Mode",
+        description: "Press L to start live continuous mode. Stay in it for a few seconds.",
+        check: |a| a.forwards >= 50,
+    },
+    Objective {
+        title: "6. Decorrelate",
+        description: "Build a stack where cos_sim(input, output) ≤ 0.05 (orthogonal).",
+        check: |a| a.last_cos_sim.is_some_and(|s| s.abs() <= 0.05),
+    },
+    Objective {
+        title: "7. Save Your Work",
+        description: "Save a YAML config to disk (⌘S / Ctrl+S).",
+        check: |a| a.achievements.contains_key("demo_runner") || a.action_log.iter().any(|e| e.msg.starts_with("saved →")),
+    },
+    Objective {
+        title: "8. Hyperdimensional",
+        description: "Bump the dim to 16,384 in Settings and run a forward there.",
+        check: |a| a.dim >= 16_000 && a.forwards >= 1,
+    },
+    Objective {
+        title: "9. All Op Kinds",
+        description: "Use every op kind: identity, dense, hrr_bind, permute, negate.",
+        check: |a| a.op_kinds_seen.len() >= 5,
+    },
+    Objective {
+        title: "10. Template Connoisseur",
+        description: "Load every example config (1 through 0).",
+        check: |a| a.templates_seen.len() >= TEMPLATES.len(),
+    },
+];
 
 #[derive(Debug, Clone)]
 struct LogEntry {
@@ -382,6 +447,8 @@ impl App {
             achievements: std::collections::HashMap::new(),
             op_kinds_seen: std::collections::HashSet::new(),
             templates_seen: std::collections::HashSet::new(),
+            current_objective: 0,
+            objective_done: vec![false; OBJECTIVES.len()],
         };
         app.load_template("standard");
         // Try to restore previous session.
@@ -863,6 +930,33 @@ impl App {
             if max_sim > 0.85 {
                 self.unlock("high_sim", "Echo Chamber", "🪞");
             }
+        }
+        // Advance objective if the current one completes.
+        self.check_objectives();
+    }
+
+    fn check_objectives(&mut self) {
+        // Mark any newly-completed objectives.
+        for (i, obj) in OBJECTIVES.iter().enumerate() {
+            if !self.objective_done[i] && (obj.check)(self) {
+                self.objective_done[i] = true;
+                let msg = format!("🎯 Objective complete: {}", obj.title);
+                self.status_msg = Some((msg.clone(), std::time::Instant::now()));
+                self.action_log.push(LogEntry {
+                    at: std::time::Instant::now(),
+                    severity: LogSeverity::Success,
+                    msg,
+                });
+                if self.action_log.len() > 128 {
+                    self.action_log.remove(0);
+                }
+            }
+        }
+        // Advance current_objective to the next incomplete one.
+        while self.current_objective < OBJECTIVES.len()
+            && self.objective_done[self.current_objective]
+        {
+            self.current_objective += 1;
         }
     }
 
@@ -1878,6 +1972,56 @@ impl eframe::App for App {
                                     });
                                 }
                             }
+                        });
+
+                        // Active objective card (#720).
+                        ui.add_space(theme::SPACE_MD);
+                        let n_done = self.objective_done.iter().filter(|x| **x).count();
+                        section_heading(
+                            ui,
+                            &format!("🎯 Objective {}/{}", n_done, OBJECTIVES.len()),
+                        );
+                        ui.add_space(theme::SPACE_SM);
+                        card(ui, |ui| {
+                            if let Some(obj) = OBJECTIVES.get(self.current_objective) {
+                                ui.label(
+                                    egui::RichText::new(obj.title)
+                                        .size(theme::SIZE_BODY)
+                                        .color(theme::ACCENT_BLUE)
+                                        .strong(),
+                                );
+                                ui.add_space(theme::SPACE_XS);
+                                ui.label(
+                                    egui::RichText::new(obj.description)
+                                        .size(theme::SIZE_SMALL)
+                                        .color(theme::TEXT_PRIMARY),
+                                );
+                            } else {
+                                ui.label(
+                                    egui::RichText::new("🏆 All objectives complete!")
+                                        .size(theme::SIZE_BODY)
+                                        .color(theme::ACCENT_PURPLE)
+                                        .strong(),
+                                );
+                            }
+                            ui.add_space(theme::SPACE_SM);
+                            // Progress dots.
+                            ui.horizontal(|ui| {
+                                for (i, done) in self.objective_done.iter().enumerate() {
+                                    let colour = if *done {
+                                        theme::ACCENT_MID
+                                    } else if i == self.current_objective {
+                                        theme::ACCENT_BLUE
+                                    } else {
+                                        theme::TEXT_DIM
+                                    };
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(10.0, 10.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    ui.painter().circle_filled(rect.center(), 4.0, colour);
+                                }
+                            });
                         });
 
                         // Smart suggestions — context-aware hints (#709).
