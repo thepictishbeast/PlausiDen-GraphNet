@@ -751,6 +751,43 @@ impl App {
         }
     }
 
+    fn export_png(&mut self) {
+        // Use scrot if available; fall back to import (ImageMagick).
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        let path = std::path::PathBuf::from(home).join(format!("graphnet-{ts}.png"));
+        let outcome = std::process::Command::new("scrot")
+            .args(["-u", "-z"])
+            .arg(&path)
+            .output()
+            .or_else(|_| {
+                std::process::Command::new("import")
+                    .args(["-window", "GraphNet"])
+                    .arg(&path)
+                    .output()
+            });
+        match outcome {
+            Ok(out) if out.status.success() => {
+                self.log(LogSeverity::Success, format!("📷 saved → {}", path.display()));
+            }
+            Ok(out) => {
+                self.log(
+                    LogSeverity::Error,
+                    format!(
+                        "screenshot failed: {}",
+                        String::from_utf8_lossy(&out.stderr).trim()
+                    ),
+                );
+            }
+            Err(e) => {
+                self.log(LogSeverity::Error, format!("screenshot tool missing: {e}"));
+            }
+        }
+    }
+
     fn persist(&mut self) {
         let path = persistent_state_path();
         if let Some(parent) = path.parent() {
@@ -1088,6 +1125,7 @@ impl eframe::App for App {
         let mut advance_walkthrough = false;
         let mut undo_request = false;
         let mut redo_request = false;
+        let mut png_request = false;
         ctx.input(|i| {
             if i.key_pressed(egui::Key::Space) {
                 self.run_forward();
@@ -1123,6 +1161,9 @@ impl eframe::App for App {
             if (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::O) {
                 self.load_yaml();
             }
+            if (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::E) {
+                png_request = true;
+            }
             if (i.modifiers.command || i.modifiers.ctrl)
                 && !i.modifiers.shift
                 && i.key_pressed(egui::Key::Z)
@@ -1154,6 +1195,9 @@ impl eframe::App for App {
         }
         if redo_request {
             self.redo();
+        }
+        if png_request {
+            self.export_png();
         }
         if advance_walkthrough {
             let next = self.walkthrough_step.map(|s| s + 1).unwrap_or(0);
