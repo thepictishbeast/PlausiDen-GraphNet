@@ -23,6 +23,7 @@ struct App {
     selected_op: Option<usize>,
     last_latency_ms: Option<f64>,
     last_cos_sim: Option<f64>,
+    cos_sim_history: std::collections::VecDeque<f64>,
     forwards: u64,
     dim: usize,
     template: &'static str,
@@ -52,6 +53,7 @@ impl App {
             selected_op: None,
             last_latency_ms: None,
             last_cos_sim: None,
+            cos_sim_history: std::collections::VecDeque::with_capacity(128),
             forwards: 0,
             dim: 10_000,
             template: "stack-standard",
@@ -154,12 +156,30 @@ impl App {
         if let Ok(trace) = self.stack.forward_with_trace(&self.input) {
             #[allow(clippy::cast_precision_loss)]
             let ms = started.elapsed().as_micros() as f64 / 1000.0;
-            self.last_cos_sim = cos_sim(&self.input, &trace.bundled).ok();
+            let sim = cos_sim(&self.input, &trace.bundled).ok();
+            self.last_cos_sim = sim;
+            if let Some(s) = sim {
+                if self.cos_sim_history.len() >= 128 {
+                    self.cos_sim_history.pop_front();
+                }
+                self.cos_sim_history.push_back(s);
+            }
             self.last_output = Some(trace.bundled.clone());
             self.last_trace = Some(trace);
             self.last_latency_ms = Some(ms);
             self.forwards = self.forwards.saturating_add(1);
         }
+    }
+
+    fn reset_stack(&mut self) {
+        self.stack = Stack::new(self.dim);
+        self.last_output = None;
+        self.last_trace = None;
+        self.selected_op = None;
+        self.last_latency_ms = None;
+        self.last_cos_sim = None;
+        self.cos_sim_history.clear();
+        self.set_status(format!("stack reset (dim={})", self.dim));
     }
 
     fn save_yaml(&mut self) {
@@ -449,6 +469,10 @@ impl eframe::App for App {
                         self.add_op("hrr_bind");
                     }
                 });
+                ui.add_space(theme::SPACE_SM);
+                if mini_button(ui, "✕ Reset stack", theme::TEXT_MUTED).clicked() {
+                    self.reset_stack();
+                }
             });
 
         egui::CentralPanel::default()
@@ -520,6 +544,30 @@ impl eframe::App for App {
                         self.live = !self.live;
                     }
                 });
+
+                ui.add_space(theme::SPACE_LG);
+
+                // Architecture graph viz.
+                section_heading(ui, "Architecture");
+                ui.add_space(theme::SPACE_SM);
+                let op_tags: Vec<String> = self
+                    .stack
+                    .operations()
+                    .iter()
+                    .map(|op| op.tag().to_string())
+                    .collect();
+                card(ui, |ui| {
+                    architecture_graph(ui, &op_tags);
+                });
+
+                if !self.cos_sim_history.is_empty() {
+                    ui.add_space(theme::SPACE_LG);
+                    section_heading(ui, "cos_sim history");
+                    ui.add_space(theme::SPACE_SM);
+                    card(ui, |ui| {
+                        sparkline(ui, self.cos_sim_history.iter().copied(), 100.0);
+                    });
+                }
 
                 ui.add_space(theme::SPACE_LG);
                 if let Some(out) = self.last_output.clone() {
@@ -767,6 +815,166 @@ fn cosine_similarity_bar(ui: &mut egui::Ui, sim: f64) {
         [egui::pos2(half_x, rect.min.y), egui::pos2(half_x, rect.max.y)],
         egui::Stroke::new(1.0, theme::TEXT_DIM),
     );
+}
+
+/// Draw the Stack as a flow graph: INPUT → [op chips in parallel] → BUNDLE → OUTPUT.
+fn architecture_graph(ui: &mut egui::Ui, op_tags: &[String]) {
+    let n_ops = op_tags.len().max(1);
+    let row_h = 220.0_f32.min(80.0 + n_ops as f32 * 26.0);
+    let width = ui.available_width().min(720.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, row_h), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+
+    let mid_y = rect.center().y;
+    let left_x = rect.min.x + 60.0;
+    let right_x = rect.max.x - 60.0;
+    let chip_w = 90.0;
+    let chip_h = 26.0;
+    let middle_x = (left_x + right_x) * 0.5;
+
+    // INPUT bubble.
+    let in_pos = egui::pos2(left_x, mid_y);
+    painter.circle_filled(in_pos, 28.0, theme::ACCENT_BLUE);
+    painter.text(
+        in_pos,
+        egui::Align2::CENTER_CENTER,
+        "INPUT",
+        egui::FontId::proportional(theme::SIZE_TINY),
+        egui::Color32::WHITE,
+    );
+
+    // BUNDLE bubble (closer to output).
+    let bundle_pos = egui::pos2(right_x - 70.0, mid_y);
+    painter.circle_filled(bundle_pos, 28.0, theme::ACCENT_PURPLE);
+    painter.text(
+        bundle_pos,
+        egui::Align2::CENTER_CENTER,
+        "BUNDLE",
+        egui::FontId::proportional(theme::SIZE_TINY),
+        egui::Color32::WHITE,
+    );
+
+    // OUTPUT bubble.
+    let out_pos = egui::pos2(right_x, mid_y);
+    painter.circle_filled(out_pos, 28.0, theme::ACCENT_MID);
+    painter.text(
+        out_pos,
+        egui::Align2::CENTER_CENTER,
+        "OUT",
+        egui::FontId::proportional(theme::SIZE_TINY),
+        egui::Color32::WHITE,
+    );
+
+    // BUNDLE → OUTPUT connector.
+    painter.line_segment(
+        [
+            egui::pos2(bundle_pos.x + 28.0, mid_y),
+            egui::pos2(out_pos.x - 28.0, mid_y),
+        ],
+        egui::Stroke::new(1.5, theme::TEXT_MUTED),
+    );
+
+    // Op chips stacked vertically between input and bundle.
+    let op_total_h = n_ops as f32 * chip_h + (n_ops as f32 - 1.0).max(0.0) * 4.0;
+    let start_y = mid_y - op_total_h * 0.5;
+
+    if op_tags.is_empty() {
+        // No ops yet — draw a dashed grey wire.
+        painter.line_segment(
+            [
+                egui::pos2(in_pos.x + 28.0, mid_y),
+                egui::pos2(bundle_pos.x - 28.0, mid_y),
+            ],
+            egui::Stroke::new(1.0, theme::TEXT_DIM),
+        );
+        painter.text(
+            egui::pos2(middle_x, mid_y - 18.0),
+            egui::Align2::CENTER_CENTER,
+            "(no ops — add some on the left)",
+            egui::FontId::proportional(theme::SIZE_TINY),
+            theme::TEXT_DIM,
+        );
+        return;
+    }
+
+    for (i, tag) in op_tags.iter().enumerate() {
+        let y = start_y + i as f32 * (chip_h + 4.0);
+        let chip_rect = egui::Rect::from_center_size(
+            egui::pos2(middle_x, y + chip_h * 0.5),
+            egui::vec2(chip_w, chip_h),
+        );
+        let colour = theme::op_color(tag);
+        painter.rect_filled(
+            chip_rect,
+            theme::RADIUS_PILL,
+            colour.gamma_multiply(0.25),
+        );
+        painter.rect_stroke(
+            chip_rect,
+            theme::RADIUS_PILL,
+            egui::Stroke::new(1.0, colour),
+        );
+        painter.text(
+            chip_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            format!("[{i}] {tag}"),
+            egui::FontId::proportional(theme::SIZE_TINY),
+            colour,
+        );
+
+        // Input → chip connector.
+        painter.line_segment(
+            [
+                egui::pos2(in_pos.x + 28.0, mid_y),
+                egui::pos2(chip_rect.min.x, chip_rect.center().y),
+            ],
+            egui::Stroke::new(1.0, theme::TEXT_MUTED),
+        );
+        // Chip → bundle connector.
+        painter.line_segment(
+            [
+                egui::pos2(chip_rect.max.x, chip_rect.center().y),
+                egui::pos2(bundle_pos.x - 28.0, mid_y),
+            ],
+            egui::Stroke::new(1.0, theme::TEXT_MUTED),
+        );
+    }
+}
+
+/// Tiny inline plot of recent values, ∈ [-1, 1] expected.
+fn sparkline(ui: &mut egui::Ui, values: impl Iterator<Item = f64>, height: f32) {
+    let vs: Vec<f64> = values.collect();
+    let width = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+
+    // Zero-line in the middle.
+    let mid_y = rect.center().y;
+    painter.line_segment(
+        [egui::pos2(rect.min.x, mid_y), egui::pos2(rect.max.x, mid_y)],
+        egui::Stroke::new(0.5, theme::TEXT_DIM),
+    );
+
+    if vs.len() < 2 {
+        return;
+    }
+
+    let step = rect.width() / (vs.len() - 1) as f32;
+    let to_y = |v: f64| -> f32 {
+        let t = ((v + 1.0) / 2.0).clamp(0.0, 1.0) as f32;
+        rect.max.y - t * rect.height()
+    };
+
+    let mut prev = egui::pos2(rect.min.x, to_y(vs[0]));
+    for (i, v) in vs.iter().enumerate().skip(1) {
+        let p = egui::pos2(rect.min.x + step * i as f32, to_y(*v));
+        painter.line_segment([prev, p], egui::Stroke::new(1.5, theme::ACCENT_BLUE));
+        prev = p;
+    }
+
+    // Highlight last value.
+    let last = egui::pos2(rect.max.x, to_y(*vs.last().unwrap_or(&0.0)));
+    painter.circle_filled(last, 3.0, theme::ACCENT_PURPLE);
 }
 
 fn main() -> Result<(), eframe::Error> {
