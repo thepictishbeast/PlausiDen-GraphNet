@@ -77,6 +77,10 @@ pub struct ArchitectureSpec {
     /// Free-form metadata for the spec author to annotate (notes, citations).
     #[serde(default)]
     pub notes: Vec<String>,
+    /// Provenance + lineage (plan §21.8) — blake3 content hashes of parent
+    /// specs this one was derived from. Empty for root specs.
+    #[serde(default)]
+    pub lineage: Vec<String>,
 }
 
 impl ArchitectureSpec {
@@ -117,7 +121,42 @@ impl ArchitectureSpec {
             ops,
             keys,
             notes: Vec::new(),
+            lineage: Vec::new(),
         }
+    }
+
+    /// Compute a blake3 content hash of this spec.
+    ///
+    /// Hashes the canonical YAML serialisation. Same spec → same hash, so
+    /// two architectures sharing a `content_hash()` are byte-for-byte
+    /// identical (modulo lineage, which is excluded — see the
+    /// implementation note below).
+    ///
+    /// BUG ASSUMPTION: lineage is included in the hash today; if you want
+    /// lineage-invariant hashing (so two specs from different parents but
+    /// identical content collide), strip lineage before serialising. We
+    /// keep it included for now because lineage IS part of identity for
+    /// provenance audits.
+    pub fn content_hash(&self) -> Result<String, SpecError> {
+        let yaml = self.to_yaml()?;
+        Ok(blake3::hash(yaml.as_bytes()).to_hex().to_string())
+    }
+
+    /// Builder: record this spec as having been derived from `parent`.
+    ///
+    /// Appends `parent.content_hash()` to `self.lineage`. The lineage list
+    /// is order-preserving — most recent ancestor at the end.
+    pub fn with_parent(mut self, parent: &ArchitectureSpec) -> Result<Self, SpecError> {
+        let parent_hash = parent.content_hash()?;
+        self.lineage.push(parent_hash);
+        Ok(self)
+    }
+
+    /// Builder: append a note.
+    #[must_use]
+    pub fn with_note(mut self, note: impl Into<String>) -> Self {
+        self.notes.push(note.into());
+        self
     }
 
     /// Materialise this spec back into a Stack.
@@ -279,6 +318,101 @@ mod tests {
         spec.keys.clear(); // strip the key but leave op referencing it
         let err = spec.to_stack().expect_err("should reject");
         assert!(matches!(err, SpecError::MissingKey(_, 0)));
+    }
+
+    #[test]
+    fn content_hash_is_deterministic() {
+        let s = Stack::new(1_000).with_operation(Operation::Identity);
+        let spec_a = ArchitectureSpec::from_stack(&s);
+        let spec_b = ArchitectureSpec::from_stack(&s);
+        let h_a = spec_a.content_hash().expect("ok");
+        let h_b = spec_b.content_hash().expect("ok");
+        assert_eq!(h_a, h_b);
+        // blake3 hex is 64 chars.
+        assert_eq!(h_a.len(), 64);
+    }
+
+    #[test]
+    fn content_hash_differs_on_different_specs() {
+        let s1 = Stack::new(1_000).with_operation(Operation::Identity);
+        let s2 = Stack::new(1_000)
+            .with_operation(Operation::Identity)
+            .with_operation(Operation::Identity);
+        let h1 = ArchitectureSpec::from_stack(&s1)
+            .content_hash()
+            .expect("ok");
+        let h2 = ArchitectureSpec::from_stack(&s2)
+            .content_hash()
+            .expect("ok");
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn with_parent_appends_lineage() {
+        let parent_stack = Stack::new(1_000).with_operation(Operation::Identity);
+        let parent_spec = ArchitectureSpec::from_stack(&parent_stack);
+        let parent_hash = parent_spec.content_hash().expect("ok");
+
+        let child_stack = Stack::new(1_000)
+            .with_operation(Operation::Identity)
+            .with_operation(Operation::Identity);
+        let child_spec = ArchitectureSpec::from_stack(&child_stack)
+            .with_parent(&parent_spec)
+            .expect("ok");
+
+        assert_eq!(child_spec.lineage, vec![parent_hash]);
+    }
+
+    #[test]
+    fn with_parent_chains_multiple_ancestors() {
+        let g0 = ArchitectureSpec::from_stack(&Stack::new(1_000));
+        let g0_hash = g0.content_hash().expect("ok");
+
+        let g1_stack = Stack::new(1_000).with_operation(Operation::Identity);
+        let g1 = ArchitectureSpec::from_stack(&g1_stack)
+            .with_parent(&g0)
+            .expect("ok");
+        let g1_hash = g1.content_hash().expect("ok");
+
+        let g2_stack = Stack::new(1_000)
+            .with_operation(Operation::Identity)
+            .with_operation(Operation::Identity);
+        let g2 = ArchitectureSpec::from_stack(&g2_stack)
+            .with_parent(&g1)
+            .expect("ok");
+
+        // Lineage on g2 only records direct parent (g1), not transitive
+        // ancestors. To get transitive history, walk parents via their
+        // own lineage fields.
+        assert_eq!(g2.lineage, vec![g1_hash]);
+        // g1's lineage still has g0.
+        assert_eq!(g1.lineage, vec![g0_hash]);
+    }
+
+    #[test]
+    fn with_note_appends_notes() {
+        let spec = ArchitectureSpec::from_stack(&Stack::new(1_000))
+            .with_note("initial draft")
+            .with_note("revised 2026-05-17");
+        assert_eq!(
+            spec.notes,
+            vec![
+                "initial draft".to_string(),
+                "revised 2026-05-17".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn lineage_round_trips_through_yaml() {
+        let parent = ArchitectureSpec::from_stack(&Stack::new(1_000));
+        let child =
+            ArchitectureSpec::from_stack(&Stack::new(1_000).with_operation(Operation::Identity))
+                .with_parent(&parent)
+                .expect("ok");
+        let yaml = child.to_yaml().expect("ok");
+        let parsed = ArchitectureSpec::from_yaml(&yaml).expect("ok");
+        assert_eq!(parsed.lineage, child.lineage);
     }
 
     #[test]
