@@ -10,7 +10,7 @@ use eframe::egui;
 use graphnet_engine::{
     stack_from_yaml, stack_to_yaml, ArchSummary, ForwardTrace, Model, Operation, Stack,
 };
-use plausiden_hdc::{cos_sim, Hypervector};
+use plausiden_hdc::{cos_sim, hamming, Hypervector};
 
 const YAML_PATH: &str = "graphnet-stack.yaml";
 
@@ -1105,9 +1105,9 @@ impl eframe::App for App {
             }
         }
 
-        // Help overlay.
+        // Help overlay: shortcuts AND experiment recipes.
         if self.show_help {
-            egui::Window::new("Keyboard shortcuts  (Esc / H to close)")
+            egui::Window::new("GraphNet help  (Esc / H to close)")
                 .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
                 .collapsible(false)
                 .resizable(false)
@@ -1119,36 +1119,81 @@ impl eframe::App for App {
                         .inner_margin(egui::Margin::same(theme::SPACE_XL)),
                 )
                 .show(ctx, |ui| {
+                    ui.set_min_width(560.0);
+                    ui.label(
+                        egui::RichText::new("Keyboard shortcuts")
+                            .size(theme::SIZE_H2)
+                            .color(theme::ACCENT_BLUE)
+                            .strong(),
+                    );
+                    ui.add_space(theme::SPACE_SM);
                     let pairs = [
                         ("Space", "run forward"),
                         ("R", "regenerate input"),
                         ("L", "toggle live continuous mode"),
-                        ("1 / 2 / 3 / 4", "load template"),
+                        ("1 / 2 … 9 / 0", "load template"),
                         ("⌘S / Ctrl+S", "save YAML"),
                         ("⌘O / Ctrl+O", "load YAML"),
                         ("H / F1", "toggle this help"),
-                        ("Esc", "close help"),
+                        ("Esc", "close modal"),
                     ];
-                    egui::Grid::new("help_grid")
+                    egui::Grid::new("help_shortcuts")
                         .num_columns(2)
-                        .spacing([theme::SPACE_XL, theme::SPACE_SM])
+                        .spacing([theme::SPACE_XL, theme::SPACE_XS])
                         .show(ui, |ui| {
                             for (key, action) in pairs {
                                 ui.label(
                                     egui::RichText::new(key)
                                         .color(theme::ACCENT_BLUE)
-                                        .size(theme::SIZE_BODY)
+                                        .size(theme::SIZE_SMALL)
                                         .monospace()
                                         .strong(),
                                 );
                                 ui.label(
                                     egui::RichText::new(action)
                                         .color(theme::TEXT_PRIMARY)
-                                        .size(theme::SIZE_BODY),
+                                        .size(theme::SIZE_SMALL),
                                 );
                                 ui.end_row();
                             }
                         });
+
+                    ui.add_space(theme::SPACE_LG);
+                    ui.label(
+                        egui::RichText::new("Try this experiment recipes:")
+                            .size(theme::SIZE_H2)
+                            .color(theme::ACCENT_PURPLE)
+                            .strong(),
+                    );
+                    ui.add_space(theme::SPACE_SM);
+                    let recipes = [
+                        "Press 2 → standard config. Press Space 5 times. Watch \
+                         the cos_sim sparkline build up. The output is mostly \
+                         orthogonal to input — expected for HDC binding.",
+                        "Press 6 → noise-resilience (8 mixed ops). cos_sim(in, out) \
+                         drops further. Now press R a few times — see how the \
+                         shape of the output heatmap changes with each new input.",
+                        "Press L for live mode. Then drag the Dim slider from 10k \
+                         to 16k. Watch latency spike on the sparkline + the \
+                         frame-budget dot turn amber/red.",
+                        "Press 9 → positional-encode. Then click each Permute \
+                         chip in the 3D arch graph — see how each one contributes \
+                         a rotated copy of the input.",
+                        "Press 10 (key 0) → anti-correlation. The bundled output's \
+                         cos_sim to input should be near 0 — the dense and -dense \
+                         legs cancel.",
+                        "Click the ▶ Demo button in the hero. Watch it cycle \
+                         through every config. Each step shows a different network \
+                         shape.",
+                    ];
+                    for (i, recipe) in recipes.iter().enumerate() {
+                        ui.label(
+                            egui::RichText::new(format!("{}.  {}", i + 1, recipe))
+                                .size(theme::SIZE_SMALL)
+                                .color(theme::TEXT_PRIMARY),
+                        );
+                        ui.add_space(theme::SPACE_XS);
+                    }
                 });
         }
 
@@ -1335,11 +1380,33 @@ impl eframe::App for App {
                     ui.add_space(theme::SPACE_SM);
                     let latency = self.last_latency_ms;
                     let sim = self.last_cos_sim;
+                    let hd = hamming(&self.input, &out).ok();
+                    let bits_diff = self
+                        .input
+                        .as_slice()
+                        .iter()
+                        .zip(out.as_slice())
+                        .filter(|(a, b)| a != b)
+                        .count();
+                    let mean_mag: f64 = {
+                        #[allow(clippy::cast_precision_loss)]
+                        let n = out.dim() as f64;
+                        out.as_slice().iter().map(|x| f64::from(*x).abs()).sum::<f64>() / n
+                    };
                     card(ui, |ui| {
                         metric(ui, "dim", &out.dim().to_string());
                         if let Some(ms) = latency {
                             metric(ui, "latency", &format!("{ms:.3} ms"));
                         }
+                        metric(
+                            ui,
+                            "bits differ vs input",
+                            &format!("{bits_diff} / {}", out.dim()),
+                        );
+                        if let Some(h) = hd {
+                            metric(ui, "hamming distance", &format!("{h:.4}"));
+                        }
+                        metric(ui, "mean |value|", &format!("{mean_mag:.4}"));
                         if let Some(s) = sim {
                             ui.add_space(theme::SPACE_SM);
                             cosine_similarity_bar(ui, s);
