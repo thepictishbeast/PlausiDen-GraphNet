@@ -65,6 +65,12 @@ struct App {
     action_log: Vec<(std::time::Instant, String)>,
     /// Which left-panel mode the tool palette has selected.
     tool_mode: ToolMode,
+    /// Undo stack: snapshots of Stack BEFORE each mutating action.
+    undo_stack: Vec<Stack>,
+    /// Redo stack: snapshots popped by undo, restorable via redo.
+    redo_stack: Vec<Stack>,
+    /// Template search filter (#717).
+    template_filter: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -320,6 +326,9 @@ impl App {
             last_forward_at: None,
             action_log: Vec::new(),
             tool_mode: ToolMode::Templates,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            template_filter: String::new(),
         };
         app.load_template("standard");
         // Try to restore previous session.
@@ -399,6 +408,7 @@ impl App {
     }
 
     fn load_template(&mut self, name: &'static str) {
+        self.push_undo();
         let template = TEMPLATES
             .iter()
             .find(|t| t.name == name)
@@ -456,6 +466,7 @@ impl App {
     }
 
     fn add_op(&mut self, kind: &str) {
+        self.push_undo();
         let seed = self.stack.len() as u64 + 100;
         let op = match kind {
             "identity" => Operation::Identity,
@@ -476,6 +487,7 @@ impl App {
 
     fn remove_op(&mut self, idx: usize) {
         if idx < self.stack.len() {
+            self.push_undo();
             self.stack.remove_operation(idx);
         }
     }
@@ -485,6 +497,7 @@ impl App {
         if idx >= self.stack.len() {
             return;
         }
+        self.push_undo();
         let tag = self.stack.operations()[idx].tag().to_string();
         self.reseed_counter = self.reseed_counter.wrapping_add(1);
         let new_seed = 9_000 + self.reseed_counter * 7 + idx as u64;
@@ -564,6 +577,7 @@ impl App {
     }
 
     fn reset_stack(&mut self) {
+        self.push_undo();
         self.stack = Stack::new(self.dim);
         self.last_output = None;
         self.last_trace = None;
@@ -627,10 +641,47 @@ impl App {
 
     fn set_status(&mut self, msg: String) {
         self.status_msg = Some((msg.clone(), std::time::Instant::now()));
-        // Also append to the action log (newest at end).
         self.action_log.push((std::time::Instant::now(), msg));
         if self.action_log.len() > 64 {
             self.action_log.remove(0);
+        }
+    }
+
+    /// Push the current Stack onto the undo stack before mutating it.
+    /// Clears the redo stack (any redo branch is invalidated by a new edit).
+    fn push_undo(&mut self) {
+        self.undo_stack.push(self.stack.clone());
+        if self.undo_stack.len() > 64 {
+            self.undo_stack.remove(0);
+        }
+        self.redo_stack.clear();
+    }
+
+    fn undo(&mut self) {
+        if let Some(prev) = self.undo_stack.pop() {
+            self.redo_stack.push(std::mem::replace(&mut self.stack, prev));
+            self.dim = self.stack.dim();
+            self.dim_slider = self.dim;
+            self.last_output = None;
+            self.last_trace = None;
+            self.selected_op = None;
+            self.set_status(format!("↶ undo (depth {})", self.undo_stack.len()));
+        } else {
+            self.set_status("↶ nothing to undo".to_string());
+        }
+    }
+
+    fn redo(&mut self) {
+        if let Some(next) = self.redo_stack.pop() {
+            self.undo_stack.push(std::mem::replace(&mut self.stack, next));
+            self.dim = self.stack.dim();
+            self.dim_slider = self.dim;
+            self.last_output = None;
+            self.last_trace = None;
+            self.selected_op = None;
+            self.set_status(format!("↷ redo (depth {})", self.redo_stack.len()));
+        } else {
+            self.set_status("↷ nothing to redo".to_string());
         }
     }
 }
@@ -638,6 +689,8 @@ impl App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut advance_walkthrough = false;
+        let mut undo_request = false;
+        let mut redo_request = false;
         ctx.input(|i| {
             if i.key_pressed(egui::Key::Space) {
                 self.run_forward();
@@ -673,6 +726,18 @@ impl eframe::App for App {
             if (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::O) {
                 self.load_yaml();
             }
+            if (i.modifiers.command || i.modifiers.ctrl)
+                && !i.modifiers.shift
+                && i.key_pressed(egui::Key::Z)
+            {
+                undo_request = true;
+            }
+            if (i.modifiers.command || i.modifiers.ctrl)
+                && i.modifiers.shift
+                && i.key_pressed(egui::Key::Z)
+            {
+                redo_request = true;
+            }
             if i.key_pressed(egui::Key::H) || i.key_pressed(egui::Key::F1) {
                 self.show_help = !self.show_help;
             }
@@ -687,6 +752,12 @@ impl eframe::App for App {
                 advance_walkthrough = true;
             }
         });
+        if undo_request {
+            self.undo();
+        }
+        if redo_request {
+            self.redo();
+        }
         if advance_walkthrough {
             let next = self.walkthrough_step.map(|s| s + 1).unwrap_or(0);
             if next >= WALKTHROUGH_STEPS.len() {
@@ -1059,7 +1130,32 @@ impl eframe::App for App {
                 }
                 section_heading(ui, "Example configs");
                 ui.add_space(theme::SPACE_SM);
-                for (i, template) in TEMPLATES.iter().enumerate() {
+                // Template search filter (#717).
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("🔍")
+                            .color(theme::TEXT_MUTED)
+                            .size(theme::SIZE_SMALL),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.template_filter)
+                            .hint_text("filter…")
+                            .desired_width(ui.available_width()),
+                    );
+                });
+                ui.add_space(theme::SPACE_XS);
+                let filter = self.template_filter.to_lowercase();
+                let filtered: Vec<(usize, &Template)> = TEMPLATES
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, t)| {
+                        filter.is_empty()
+                            || t.name.to_lowercase().contains(&filter)
+                            || t.summary.to_lowercase().contains(&filter)
+                            || t.explanation.to_lowercase().contains(&filter)
+                    })
+                    .collect();
+                for (i, template) in filtered.iter().map(|(i, t)| (*i, *t)) {
                     let active = template.name == self.template;
                     let chip_fill = if active {
                         theme::ACCENT_MID
