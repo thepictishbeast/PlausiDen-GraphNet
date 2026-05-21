@@ -1,0 +1,26 @@
+[package]
+name = "graphnet-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+graphnet-engine = { path = "../crates/graphnet-engine" }
+
+[[bin]]
+name = "fuzz_yaml_spec"
+path = "fuzz_targets/fuzz_yaml_spec.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_snapshot_restore"
+path = "fuzz_targets/fuzz_snapshot_restore.rs"
+test = false
+doc = false
+bench = false

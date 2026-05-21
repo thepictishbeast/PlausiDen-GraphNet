@@ -27,3 +27,8 @@ benches/target/
 # IDE
 .idea/
 .vscode/
+
+# Fuzzing
+fuzz/target/
+fuzz/corpus/
+fuzz/artifacts/
