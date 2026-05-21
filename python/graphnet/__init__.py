@@ -13,8 +13,10 @@ from __future__ import annotations
 __version__ = "0.1.0"
 
 try:
-    from graphnet._graphnet_native import banner as _native_banner  # type: ignore[import-not-found]
-    from graphnet._graphnet_native import version as _native_version  # type: ignore[import-not-found]
+    from graphnet._graphnet_native import (  # type: ignore[import-not-found]
+        banner as _native_banner,
+        version as _native_version,
+    )
 
     _NATIVE_AVAILABLE = True
 except ImportError:  # pragma: no cover - exercised when native lib is missing
@@ -38,4 +40,4 @@ def version() -> str:
     return _native_version()
 
 
-__all__ = ["banner", "version", "__version__"]
+__all__ = ["__version__", "banner", "version"]
