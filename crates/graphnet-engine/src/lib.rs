@@ -17,6 +17,7 @@
 #![forbid(unsafe_code)]
 
 pub mod continuous;
+pub mod history;
 pub mod intervene;
 pub mod model;
 pub mod op;
@@ -25,6 +26,7 @@ pub mod stack;
 pub mod trace;
 
 pub use continuous::{ContinuousError, ContinuousRunner, ForwardEvent};
+pub use history::{HistoryError, InterventionHistory, DEFAULT_HISTORY_CAPACITY};
 pub use intervene::{apply_intervention, undo, Intervention, InterventionError, UndoToken};
 pub use model::{ArchSummary, ExternalModel, Model, ModelError};
 pub use op::{Operation, OperationError};
@@ -66,6 +68,10 @@ pub enum Error {
     /// Continuous-mode runner error.
     #[error("continuous: {0}")]
     Continuous(#[from] ContinuousError),
+
+    /// History (undo/redo) error.
+    #[error("history: {0}")]
+    History(#[from] HistoryError),
 
     /// Underlying I/O failure (snapshot/restore, log read).
     #[error("io: {0}")]
