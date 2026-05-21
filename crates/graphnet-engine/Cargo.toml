@@ -16,6 +16,8 @@ serde_yaml.workspace = true
 bincode.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
 crossbeam-channel.workspace = true
 rayon.workspace = true
 rustfft.workspace = true
@@ -33,7 +35,6 @@ similar = { workspace = true }
 proptest.workspace = true
 criterion.workspace = true
 anyhow.workspace = true
-tracing-subscriber.workspace = true
 
 [[bench]]
 name = "hdc_ops"

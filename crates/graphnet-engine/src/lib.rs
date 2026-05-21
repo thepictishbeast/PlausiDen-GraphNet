@@ -19,6 +19,7 @@
 pub mod continuous;
 pub mod history;
 pub mod intervene;
+pub mod logging;
 pub mod model;
 pub mod monitor;
 pub mod op;
@@ -30,6 +31,10 @@ pub mod yaml_spec;
 pub use continuous::{ContinuousError, ContinuousRunner, ForwardEvent};
 pub use history::{HistoryError, InterventionHistory, DEFAULT_HISTORY_CAPACITY};
 pub use intervene::{apply_intervention, undo, Intervention, InterventionError, UndoToken};
+pub use logging::{
+    forward_span, init as init_logging, intervene_span, is_graphnet_log_dir, monitor_span,
+    new_session_id, session_id, LoggingError, LoggingHandle,
+};
 pub use model::{ArchSummary, ExternalModel, Model, ModelError};
 pub use monitor::{estimate_cost, flop_estimate, CostEstimate, ResourceMonitor, ResourceSample};
 pub use op::{Operation, OperationError};

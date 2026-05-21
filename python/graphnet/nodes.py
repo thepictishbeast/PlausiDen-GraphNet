@@ -120,27 +120,30 @@ class NodeGraph:
         """Return node IDs in topological order (inputs always precede consumers).
 
         Raises NodeGraphError on cycles or dangling input references.
+        Duplicate input IDs on a single node (e.g. cos_sim(v, v)) count as
+        ONE incoming edge — they represent the same data dependency.
         """
-        in_degree = dict.fromkeys(self._nodes, 0)
+        # Build a unique edge set per node: which distinct nodes feed into me.
+        unique_inputs: dict[int, set[int]] = {nid: set() for nid in self._nodes}
         for node in self._nodes.values():
             for inp in node.inputs:
                 if inp not in self._nodes:
                     raise NodeGraphError(
                         f"node {node.node_id} references missing input {inp}"
                     )
-                in_degree[node.node_id] += 1
+                unique_inputs[node.node_id].add(inp)
 
+        in_degree = {nid: len(inputs) for nid, inputs in unique_inputs.items()}
         queue = [nid for nid, deg in in_degree.items() if deg == 0]
         order: list[int] = []
-        # Simple Kahn's algorithm.
         while queue:
             nid = queue.pop(0)
             order.append(nid)
-            for other in self._nodes.values():
-                if nid in other.inputs:
-                    in_degree[other.node_id] -= 1
-                    if in_degree[other.node_id] == 0:
-                        queue.append(other.node_id)
+            for other_id, other_inputs in unique_inputs.items():
+                if nid in other_inputs:
+                    in_degree[other_id] -= 1
+                    if in_degree[other_id] == 0:
+                        queue.append(other_id)
         if len(order) != len(self._nodes):
             raise NodeGraphError("cycle detected in node graph")
         return order
