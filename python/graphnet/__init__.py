@@ -76,7 +76,7 @@ def native_available() -> bool:
 # Phase 11 rolling features: gallery + benchmarks + share are pure-Python
 # and safe to import unconditionally (their entry points raise
 # NotImplementedError when the native extension is needed).
-from graphnet import benchmarks, gallery, nodes, share  # noqa: E402
+from graphnet import benchmarks, gallery, maths, nodes, share  # noqa: E402
 
 __all__ = [
     "ForwardTrace",
@@ -92,6 +92,7 @@ __all__ = [
     "cos_sim",
     "gallery",
     "hamming",
+    "maths",
     "native_available",
     "nodes",
     "restore",
