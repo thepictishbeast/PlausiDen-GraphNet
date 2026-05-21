@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::op::{Operation, OperationError};
+use crate::trace::{ForwardTrace, OperationOutput};
 
 /// Errors during Stack execution.
 #[derive(Debug, Error)]
@@ -85,6 +86,30 @@ impl Stack {
         self
     }
 
+    /// Insert `op` at the given index, shifting later ops back by one.
+    ///
+    /// BUG ASSUMPTION: panics if `index > self.len()`. Use the intervention
+    /// API ([`crate::apply_intervention`]) for bounds-checked mutation.
+    pub fn insert_operation(&mut self, index: usize, op: Operation) {
+        self.operations.insert(index, op);
+    }
+
+    /// Remove and return the operation at `index`, shifting later ops down.
+    ///
+    /// BUG ASSUMPTION: panics if `index >= self.len()`. Use the intervention
+    /// API for bounds-checked mutation.
+    pub fn remove_operation(&mut self, index: usize) -> Operation {
+        self.operations.remove(index)
+    }
+
+    /// Replace the operation at `index`, returning the previous occupant.
+    ///
+    /// BUG ASSUMPTION: panics if `index >= self.len()`. Use the intervention
+    /// API for bounds-checked mutation.
+    pub fn replace_operation(&mut self, index: usize, op: Operation) -> Operation {
+        std::mem::replace(&mut self.operations[index], op)
+    }
+
     /// Returns the Stack's dimensionality.
     #[must_use]
     pub fn dim(&self) -> usize {
@@ -144,6 +169,50 @@ impl Stack {
 
         let refs: Vec<&Hypervector> = outs.iter().collect();
         Ok(bundle(&refs)?)
+    }
+
+    /// Same as [`Stack::forward`] but captures per-operation outputs into a
+    /// [`ForwardTrace`] alongside the final bundled output.
+    ///
+    /// Used by the Jupyter viz layer + audit pipeline + debugger.
+    pub fn forward_with_trace(&self, input: &Hypervector) -> Result<ForwardTrace, StackError> {
+        if self.operations.is_empty() {
+            return Err(StackError::Empty);
+        }
+        if input.dim() != self.dim {
+            return Err(StackError::DimMismatch {
+                op: "stack.input",
+                got: input.dim(),
+                expected: self.dim,
+            });
+        }
+
+        let mut per_op = Vec::with_capacity(self.operations.len());
+        let mut outs = Vec::with_capacity(self.operations.len());
+        for (index, op) in self.operations.iter().enumerate() {
+            let out = op.apply(input)?;
+            if out.dim() != self.dim {
+                return Err(StackError::DimMismatch {
+                    op: op.tag(),
+                    got: out.dim(),
+                    expected: self.dim,
+                });
+            }
+            per_op.push(OperationOutput {
+                tag: op.tag().to_string(),
+                index,
+                output: out.clone(),
+            });
+            outs.push(out);
+        }
+
+        let refs: Vec<&Hypervector> = outs.iter().collect();
+        let bundled = bundle(&refs)?;
+        Ok(ForwardTrace {
+            input: input.clone(),
+            per_op,
+            bundled,
+        })
     }
 }
 

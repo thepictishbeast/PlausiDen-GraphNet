@@ -16,13 +16,21 @@
 
 #![forbid(unsafe_code)]
 
+pub mod intervene;
 pub mod model;
 pub mod op;
+pub mod snapshot;
 pub mod stack;
+pub mod trace;
 
+pub use intervene::{apply_intervention, undo, Intervention, InterventionError, UndoToken};
 pub use model::{ArchSummary, ExternalModel, Model, ModelError};
 pub use op::{Operation, OperationError};
+pub use snapshot::{
+    restore, signed_snapshot, snapshot, verify_and_restore, SignedSnapshot, SnapshotError,
+};
 pub use stack::{Stack, StackError};
+pub use trace::{ForwardTrace, OperationOutput};
 
 use thiserror::Error;
 
@@ -44,6 +52,14 @@ pub enum Error {
     /// Operation error.
     #[error("op: {0}")]
     Op(#[from] OperationError),
+
+    /// Intervention API error.
+    #[error("intervene: {0}")]
+    Intervene(#[from] InterventionError),
+
+    /// Snapshot / restore error.
+    #[error("snapshot: {0}")]
+    Snapshot(#[from] SnapshotError),
 
     /// Underlying I/O failure (snapshot/restore, log read).
     #[error("io: {0}")]
