@@ -782,9 +782,20 @@ impl eframe::App for App {
                     .iter()
                     .map(|op| op.tag().to_string())
                     .collect();
+                let selected = self.selected_op;
+                let mut graph_click: Option<usize> = None;
                 card(ui, |ui| {
-                    architecture_graph(ui, &op_tags);
+                    if let Some(idx) = architecture_graph(ui, &op_tags, selected) {
+                        graph_click = Some(idx);
+                    }
                 });
+                if let Some(idx) = graph_click {
+                    self.selected_op = if self.selected_op == Some(idx) {
+                        None
+                    } else {
+                        Some(idx)
+                    };
+                }
 
                 if !self.cos_sim_history.is_empty() {
                     ui.add_space(theme::SPACE_LG);
@@ -1295,11 +1306,17 @@ fn cosine_similarity_bar(ui: &mut egui::Ui, sim: f64) {
 }
 
 /// Draw the Stack as a flow graph: INPUT → [op chips in parallel] → BUNDLE → OUTPUT.
-fn architecture_graph(ui: &mut egui::Ui, op_tags: &[String]) {
+/// Returns Some(idx) if the user clicked the chip for op `idx`.
+fn architecture_graph(
+    ui: &mut egui::Ui,
+    op_tags: &[String],
+    selected: Option<usize>,
+) -> Option<usize> {
     let n_ops = op_tags.len().max(1);
     let row_h = 220.0_f32.min(80.0 + n_ops as f32 * 26.0);
     let width = ui.available_width().min(720.0);
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, row_h), egui::Sense::hover());
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(width, row_h), egui::Sense::click());
     let painter = ui.painter_at(rect);
 
     let mid_y = rect.center().y;
@@ -1371,8 +1388,15 @@ fn architecture_graph(ui: &mut egui::Ui, op_tags: &[String]) {
             egui::FontId::proportional(theme::SIZE_TINY),
             theme::TEXT_DIM,
         );
-        return;
+        return None;
     }
+
+    let mut clicked_idx: Option<usize> = None;
+    let click_pos = if response.clicked() {
+        response.interact_pointer_pos()
+    } else {
+        None
+    };
 
     for (i, tag) in op_tags.iter().enumerate() {
         let y = start_y + i as f32 * (chip_h + 4.0);
@@ -1381,41 +1405,62 @@ fn architecture_graph(ui: &mut egui::Ui, op_tags: &[String]) {
             egui::vec2(chip_w, chip_h),
         );
         let colour = theme::op_color(tag);
-        painter.rect_filled(
-            chip_rect,
-            theme::RADIUS_PILL,
-            colour.gamma_multiply(0.25),
-        );
+        let is_selected = selected == Some(i);
+        let fill = if is_selected {
+            colour
+        } else {
+            colour.gamma_multiply(0.25)
+        };
+        let text_colour = if is_selected {
+            egui::Color32::WHITE
+        } else {
+            colour
+        };
+        painter.rect_filled(chip_rect, theme::RADIUS_PILL, fill);
         painter.rect_stroke(
             chip_rect,
             theme::RADIUS_PILL,
-            egui::Stroke::new(1.0, colour),
+            egui::Stroke::new(if is_selected { 2.0 } else { 1.0 }, colour),
         );
         painter.text(
             chip_rect.center(),
             egui::Align2::CENTER_CENTER,
             format!("[{i}] {tag}"),
             egui::FontId::proportional(theme::SIZE_TINY),
-            colour,
+            text_colour,
         );
 
         // Input → chip connector.
+        let connector_colour = if is_selected {
+            colour
+        } else {
+            theme::TEXT_MUTED
+        };
+        let connector_stroke = if is_selected { 1.6 } else { 1.0 };
         painter.line_segment(
             [
                 egui::pos2(in_pos.x + 28.0, mid_y),
                 egui::pos2(chip_rect.min.x, chip_rect.center().y),
             ],
-            egui::Stroke::new(1.0, theme::TEXT_MUTED),
+            egui::Stroke::new(connector_stroke, connector_colour),
         );
-        // Chip → bundle connector.
         painter.line_segment(
             [
                 egui::pos2(chip_rect.max.x, chip_rect.center().y),
                 egui::pos2(bundle_pos.x - 28.0, mid_y),
             ],
-            egui::Stroke::new(1.0, theme::TEXT_MUTED),
+            egui::Stroke::new(connector_stroke, connector_colour),
         );
+
+        // Click hit-test.
+        if let Some(p) = click_pos {
+            if chip_rect.contains(p) {
+                clicked_idx = Some(i);
+            }
+        }
     }
+
+    clicked_idx
 }
 
 /// Plot recent latency values (positive ms). Auto-scales y-axis.
