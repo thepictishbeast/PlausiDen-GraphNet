@@ -14,6 +14,16 @@ use plausiden_hdc::{cos_sim, Hypervector};
 
 const YAML_PATH: &str = "graphnet-stack.yaml";
 
+fn persistent_state_path() -> std::path::PathBuf {
+    let base = std::env::var("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+            std::path::PathBuf::from(home).join(".config")
+        });
+    base.join("graphnet").join("state.yaml")
+}
+
 struct App {
     stack: Stack,
     input_seed: u64,
@@ -24,6 +34,7 @@ struct App {
     last_latency_ms: Option<f64>,
     last_cos_sim: Option<f64>,
     cos_sim_history: std::collections::VecDeque<f64>,
+    latency_history: std::collections::VecDeque<f64>,
     forwards: u64,
     dim: usize,
     template: &'static str,
@@ -54,6 +65,7 @@ impl App {
             last_latency_ms: None,
             last_cos_sim: None,
             cos_sim_history: std::collections::VecDeque::with_capacity(128),
+            latency_history: std::collections::VecDeque::with_capacity(128),
             forwards: 0,
             dim: 10_000,
             template: "stack-standard",
@@ -64,6 +76,8 @@ impl App {
             mode: theme::Mode::Dark,
         };
         app.load_template("stack-standard");
+        // Try to restore previous session.
+        let _ = app.restore();
         app
     }
 
@@ -164,10 +178,45 @@ impl App {
                 }
                 self.cos_sim_history.push_back(s);
             }
+            if self.latency_history.len() >= 128 {
+                self.latency_history.pop_front();
+            }
+            self.latency_history.push_back(ms);
             self.last_output = Some(trace.bundled.clone());
             self.last_trace = Some(trace);
             self.last_latency_ms = Some(ms);
             self.forwards = self.forwards.saturating_add(1);
+        }
+    }
+
+    fn persist(&mut self) {
+        let path = persistent_state_path();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(yaml) = stack_to_yaml(&self.stack) {
+            let _ = std::fs::write(&path, yaml);
+        }
+    }
+
+    fn restore(&mut self) -> bool {
+        let path = persistent_state_path();
+        let Ok(yaml) = std::fs::read_to_string(&path) else {
+            return false;
+        };
+        match stack_from_yaml(&yaml) {
+            Ok(stack) => {
+                self.dim = stack.dim();
+                self.stack = stack;
+                self.input = Hypervector::random_seeded(self.dim, self.input_seed);
+                self.last_output = None;
+                self.last_trace = None;
+                self.last_latency_ms = None;
+                self.last_cos_sim = None;
+                self.set_status(format!("restored ← {}", path.display()));
+                true
+            }
+            Err(_) => false,
         }
     }
 
@@ -190,6 +239,8 @@ impl App {
             },
             Err(e) => self.set_status(format!("encode failed: {e}")),
         }
+        // Mirror to persistent state so it survives restart.
+        self.persist();
     }
 
     fn load_yaml(&mut self) {
@@ -354,6 +405,31 @@ impl eframe::App for App {
                                 theme::TEXT_MUTED
                             }),
                     );
+
+                    // Frame-budget indicator dot (green ≤16ms, amber ≤32ms, red >32ms).
+                    if let Some(ms) = self.last_latency_ms {
+                        let (colour, label) = if ms <= 16.0 {
+                            (egui::Color32::from_rgb(0x3F, 0xB1, 0x6E), "60fps OK")
+                        } else if ms <= 32.0 {
+                            (theme::ACCENT_PURPLE, "30fps OK")
+                        } else {
+                            (
+                                egui::Color32::from_rgb(0xE0, 0x6A, 0x5B),
+                                "below 30fps",
+                            )
+                        };
+                        ui.add_space(theme::SPACE_MD);
+                        let (rect, _) = ui.allocate_exact_size(
+                            egui::vec2(10.0, 10.0),
+                            egui::Sense::hover(),
+                        );
+                        ui.painter().circle_filled(rect.center(), 5.0, colour);
+                        ui.label(
+                            egui::RichText::new(label)
+                                .size(theme::SIZE_TINY)
+                                .color(theme::TEXT_MUTED),
+                        );
+                    }
                 });
             });
             let now = std::time::Instant::now();
@@ -562,10 +638,22 @@ impl eframe::App for App {
 
                 if !self.cos_sim_history.is_empty() {
                     ui.add_space(theme::SPACE_LG);
-                    section_heading(ui, "cos_sim history");
-                    ui.add_space(theme::SPACE_SM);
-                    card(ui, |ui| {
-                        sparkline(ui, self.cos_sim_history.iter().copied(), 100.0);
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            section_heading(ui, "cos_sim history");
+                            ui.add_space(theme::SPACE_SM);
+                            card(ui, |ui| {
+                                sparkline(ui, self.cos_sim_history.iter().copied(), 80.0);
+                            });
+                        });
+                        ui.add_space(theme::SPACE_MD);
+                        ui.vertical(|ui| {
+                            section_heading(ui, "latency history (ms)");
+                            ui.add_space(theme::SPACE_SM);
+                            card(ui, |ui| {
+                                latency_sparkline(ui, self.latency_history.iter().copied(), 80.0);
+                            });
+                        });
                     });
                 }
 
@@ -939,6 +1027,62 @@ fn architecture_graph(ui: &mut egui::Ui, op_tags: &[String]) {
             egui::Stroke::new(1.0, theme::TEXT_MUTED),
         );
     }
+}
+
+/// Plot recent latency values (positive ms). Auto-scales y-axis.
+fn latency_sparkline(ui: &mut egui::Ui, values: impl Iterator<Item = f64>, height: f32) {
+    let vs: Vec<f64> = values.collect();
+    let width = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+
+    if vs.is_empty() {
+        return;
+    }
+
+    let max_v = vs.iter().copied().fold(0.0_f64, f64::max).max(1.0);
+
+    // 16ms (60fps) reference line.
+    if max_v > 16.0 {
+        let y16 = rect.max.y - (16.0 / max_v) as f32 * rect.height();
+        painter.line_segment(
+            [egui::pos2(rect.min.x, y16), egui::pos2(rect.max.x, y16)],
+            egui::Stroke::new(0.5, theme::ACCENT_PURPLE.gamma_multiply(0.5)),
+        );
+    }
+
+    if vs.len() < 2 {
+        return;
+    }
+
+    let step = rect.width() / (vs.len() - 1) as f32;
+    let to_y = |v: f64| -> f32 {
+        let t = (v / max_v) as f32;
+        rect.max.y - t * rect.height()
+    };
+
+    let mut prev = egui::pos2(rect.min.x, to_y(vs[0]));
+    for (i, v) in vs.iter().enumerate().skip(1) {
+        let p = egui::pos2(rect.min.x + step * i as f32, to_y(*v));
+        let colour = if *v <= 16.0 {
+            theme::ACCENT_BLUE
+        } else if *v <= 32.0 {
+            theme::ACCENT_PURPLE
+        } else {
+            egui::Color32::from_rgb(0xE0, 0x6A, 0x5B)
+        };
+        painter.line_segment([prev, p], egui::Stroke::new(1.5, colour));
+        prev = p;
+    }
+
+    // Annotate max.
+    painter.text(
+        egui::pos2(rect.max.x - 4.0, rect.min.y + 8.0),
+        egui::Align2::RIGHT_TOP,
+        format!("max {:.2} ms", max_v),
+        egui::FontId::proportional(theme::SIZE_TINY),
+        theme::TEXT_MUTED,
+    );
 }
 
 /// Tiny inline plot of recent values, ∈ [-1, 1] expected.
