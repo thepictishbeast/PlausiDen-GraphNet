@@ -6,19 +6,21 @@ use eframe::egui;
 
 // --- Spacing scale (px) --------------------------------------------------
 
-pub const SPACE_XS: f32 = 4.0;
-pub const SPACE_SM: f32 = 8.0;
-pub const SPACE_MD: f32 = 12.0;
-pub const SPACE_LG: f32 = 18.0;
-pub const SPACE_XL: f32 = 28.0;
+pub const SPACE_XS: f32 = 3.0;
+pub const SPACE_SM: f32 = 6.0;
+pub const SPACE_MD: f32 = 10.0;
+pub const SPACE_LG: f32 = 14.0;
+pub const SPACE_XL: f32 = 20.0;
 
 // --- Typography (px) -----------------------------------------------------
+// Compact sizing pass (iter 26). Owner: "everything is big like its made
+// for an old person". ~25% reduction across the typography scale.
 
-pub const SIZE_H1: f32 = 24.0;
-pub const SIZE_H2: f32 = 18.0;
-pub const SIZE_BODY: f32 = 14.5;
-pub const SIZE_SMALL: f32 = 12.0;
-pub const SIZE_TINY: f32 = 10.5;
+pub const SIZE_H1: f32 = 18.0;
+pub const SIZE_H2: f32 = 14.5;
+pub const SIZE_BODY: f32 = 12.5;
+pub const SIZE_SMALL: f32 = 11.0;
+pub const SIZE_TINY: f32 = 9.5;
 
 // --- Rounded corners ------------------------------------------------------
 

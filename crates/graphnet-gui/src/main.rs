@@ -56,6 +56,8 @@ struct App {
     arch_pitch: f32,
     /// Auto-rotate the 3D arch graph?
     arch_autorotate: bool,
+    /// Arch graph zoom factor (1.0 = baseline, 0.5..3.0).
+    arch_zoom: f32,
     /// Op index currently being dragged in the sidebar (for reorder).
     drag_source: Option<usize>,
     /// Time of the most recent forward — animates particle flow on connectors.
@@ -322,6 +324,7 @@ impl App {
             arch_yaw: 0.6,
             arch_pitch: 0.15,
             arch_autorotate: false,
+            arch_zoom: 1.0,
             drag_source: None,
             last_forward_at: None,
             action_log: Vec::new(),
@@ -815,107 +818,96 @@ impl eframe::App for App {
             .resizable(false)
             .show_separator_line(false)
             .show(ctx, |ui| {
-                let band_h = 60.0;
+                let band_h = 56.0;
                 let (rect, _) = ui.allocate_exact_size(
                     egui::vec2(ui.available_width(), band_h),
                     egui::Sense::hover(),
                 );
-                theme::paint_gradient(ui.painter(), rect);
-                let inner_rect = rect.shrink2(egui::vec2(theme::SPACE_XL, theme::SPACE_SM));
+                // SOLID dark band — text reads cleanly. (Previous gradient hero
+                // had poor contrast per owner feedback.)
+                let hero_bg = egui::Color32::from_rgb(0x07, 0x09, 0x10);
+                ui.painter().rect_filled(rect, 0.0, hero_bg);
+                // Thin 3px gradient accent strip at the BOTTOM.
+                let strip = egui::Rect::from_min_max(
+                    egui::pos2(rect.min.x, rect.max.y - 3.0),
+                    rect.max,
+                );
+                theme::paint_gradient(ui.painter(), strip);
+
+                let inner_rect = rect.shrink2(egui::vec2(theme::SPACE_LG, theme::SPACE_SM));
                 let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(inner_rect));
-                inner.horizontal(|ui| {
+                inner.horizontal_centered(|ui| {
+                    // Small gradient pill as brand mark.
+                    let (pill_rect, _) =
+                        ui.allocate_exact_size(egui::vec2(6.0, 26.0), egui::Sense::hover());
+                    theme::paint_gradient(ui.painter(), pill_rect);
+                    ui.add_space(theme::SPACE_SM);
                     ui.label(
-                        egui::RichText::new("PlausiDen / GraphNet")
+                        egui::RichText::new("GraphNet")
                             .size(theme::SIZE_H2)
                             .color(egui::Color32::WHITE)
                             .strong(),
                     );
-                    ui.add_space(theme::SPACE_MD);
+                    ui.add_space(theme::SPACE_SM);
                     ui.label(
-                        egui::RichText::new("Live REPL · GPU · v0.1.0")
+                        egui::RichText::new("· Live REPL · v0.1.0")
                             .size(theme::SIZE_SMALL)
-                            .color(egui::Color32::from_white_alpha(190)),
+                            .color(egui::Color32::from_rgb(0xC8, 0xCC, 0xD9)),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let toggle = ui.add(
-                            egui::Button::new(
-                                egui::RichText::new(match self.mode {
-                                    theme::Mode::Dark => "☀ light",
-                                    theme::Mode::Light => "☾ dark",
-                                })
-                                .size(theme::SIZE_SMALL)
-                                .color(egui::Color32::WHITE)
-                                .strong(),
-                            )
-                            .fill(egui::Color32::from_white_alpha(40))
-                            .stroke(egui::Stroke::new(
-                                1.0,
-                                egui::Color32::from_white_alpha(120),
-                            ))
-                            .rounding(egui::Rounding::same(theme::RADIUS_SM))
-                            .min_size(egui::vec2(72.0, 28.0)),
-                        );
-                        if toggle.clicked() {
-                            self.toggle_mode(ctx);
-                        }
-                        ui.add_space(theme::SPACE_SM);
-                        // Demo button — pulses while playing.
-                        let demo_label =
-                            if self.demo.is_some() { "■ Stop demo" } else { "▶ Demo" };
-                        let demo_btn = ui.add(
-                            egui::Button::new(
-                                egui::RichText::new(demo_label)
-                                    .size(theme::SIZE_SMALL)
-                                    .color(egui::Color32::WHITE)
-                                    .strong(),
-                            )
-                            .fill(if self.demo.is_some() {
-                                theme::ACCENT_PURPLE
+                        let hero_btn = |ui: &mut egui::Ui,
+                                        text: &str,
+                                        active: bool|
+                         -> egui::Response {
+                            let fg = if active {
+                                egui::Color32::WHITE
                             } else {
-                                egui::Color32::from_white_alpha(40)
-                            })
-                            .stroke(egui::Stroke::new(
-                                1.0,
-                                egui::Color32::from_white_alpha(180),
-                            ))
-                            .rounding(egui::Rounding::same(theme::RADIUS_SM))
-                            .min_size(egui::vec2(72.0, 28.0)),
-                        );
-                        if demo_btn.clicked() {
-                            if self.demo.is_some() {
+                                egui::Color32::from_rgb(0xD8, 0xDC, 0xE8)
+                            };
+                            let fill = if active {
+                                theme::ACCENT_MID
+                            } else {
+                                egui::Color32::from_rgb(0x15, 0x1A, 0x26)
+                            };
+                            let stroke_col = if active {
+                                theme::ACCENT_MID
+                            } else {
+                                egui::Color32::from_rgb(0x32, 0x3A, 0x50)
+                            };
+                            ui.add(
+                                egui::Button::new(
+                                    egui::RichText::new(text)
+                                        .size(theme::SIZE_SMALL)
+                                        .color(fg)
+                                        .strong(),
+                                )
+                                .fill(fill)
+                                .stroke(egui::Stroke::new(1.0, stroke_col))
+                                .rounding(egui::Rounding::same(theme::RADIUS_PILL))
+                                .min_size(egui::vec2(0.0, 24.0)),
+                            )
+                        };
+                        if hero_btn(ui, " ❓ Help ", self.show_help).clicked() {
+                            self.show_help = !self.show_help;
+                        }
+                        ui.add_space(theme::SPACE_XS);
+                        let demo_active = self.demo.is_some();
+                        let demo_lbl = if demo_active { " ⏹ Stop demo " } else { " ▶ Demo " };
+                        if hero_btn(ui, demo_lbl, demo_active).clicked() {
+                            if demo_active {
                                 self.stop_demo();
                             } else {
                                 self.start_demo();
                             }
                         }
-                        ui.add_space(theme::SPACE_SM);
-                        let help_btn = ui.add(
-                            egui::Button::new(
-                                egui::RichText::new("? Help")
-                                    .size(theme::SIZE_SMALL)
-                                    .color(egui::Color32::WHITE)
-                                    .strong(),
-                            )
-                            .fill(egui::Color32::from_white_alpha(40))
-                            .stroke(egui::Stroke::new(
-                                1.0,
-                                egui::Color32::from_white_alpha(120),
-                            ))
-                            .rounding(egui::Rounding::same(theme::RADIUS_SM))
-                            .min_size(egui::vec2(60.0, 28.0)),
-                        );
-                        if help_btn.clicked() {
-                            self.show_help = !self.show_help;
+                        ui.add_space(theme::SPACE_XS);
+                        let theme_lbl = match self.mode {
+                            theme::Mode::Dark => " ☀ Light ",
+                            theme::Mode::Light => " ☾ Dark ",
+                        };
+                        if hero_btn(ui, theme_lbl, false).clicked() {
+                            self.toggle_mode(ctx);
                         }
-                        ui.add_space(theme::SPACE_MD);
-                        ui.label(
-                            egui::RichText::new(
-                                "[Space] fwd · [R] regen · [L] live · [1-8] tpl · [⌘S/⌘O] yaml",
-                            )
-                            .size(theme::SIZE_TINY)
-                            .color(egui::Color32::from_white_alpha(160))
-                            .monospace(),
-                        );
                     });
                 });
             });
@@ -1003,7 +995,7 @@ impl eframe::App for App {
         // Blender/FreeCAD-style tool palette: icon-only column on the far
         // left for mode switching.
         egui::SidePanel::left("tool_palette")
-            .exact_width(56.0)
+            .exact_width(44.0)
             .resizable(false)
             .frame(
                 egui::Frame::none()
@@ -1026,7 +1018,7 @@ impl eframe::App for App {
                             .add(
                                 egui::Button::new(
                                     egui::RichText::new(mode.icon())
-                                        .size(22.0)
+                                        .size(18.0)
                                         .color(if active {
                                             egui::Color32::WHITE
                                         } else {
@@ -1044,7 +1036,7 @@ impl eframe::App for App {
                                     egui::Stroke::NONE
                                 })
                                 .rounding(egui::Rounding::same(theme::RADIUS_SM))
-                                .min_size(egui::vec2(40.0, 40.0)),
+                                .min_size(egui::vec2(32.0, 32.0)),
                             )
                             .on_hover_text(mode.label());
                         if resp.clicked() {
@@ -1182,7 +1174,7 @@ impl eframe::App for App {
                             .fill(chip_fill)
                             .stroke(egui::Stroke::new(1.0, chip_stroke))
                             .rounding(egui::Rounding::same(theme::RADIUS_MD))
-                            .min_size(egui::vec2(ui.available_width(), 44.0)),
+                            .min_size(egui::vec2(ui.available_width(), 36.0)),
                         )
                         .on_hover_text(template.explanation);
                     if resp.clicked() {
@@ -1718,7 +1710,7 @@ impl eframe::App for App {
                         );
                     });
                     ui.add_space(theme::SPACE_SM);
-                    if hypervector_heatmap_clickable(ui, &input_clone, 80, 4.0) {
+                    if hypervector_heatmap_clickable(ui, &input_clone, 100, 2.0) {
                         self.zoom_target = Some(ZoomTarget::Input);
                     }
                 });
@@ -1752,7 +1744,7 @@ impl eframe::App for App {
                         )
                         .fill(pulsed_fill)
                         .rounding(egui::Rounding::same(theme::RADIUS_MD))
-                        .min_size(egui::vec2(160.0, 40.0)),
+                        .min_size(egui::vec2(130.0, 32.0)),
                     );
                     if btn.clicked() {
                         self.run_forward();
@@ -1777,7 +1769,7 @@ impl eframe::App for App {
                         .fill(live_color)
                         .stroke(egui::Stroke::new(1.0, theme::ACCENT_PURPLE))
                         .rounding(egui::Rounding::same(theme::RADIUS_MD))
-                        .min_size(egui::vec2(110.0, 40.0)),
+                        .min_size(egui::vec2(95.0, 32.0)),
                     );
                     if live_btn.clicked() {
                         self.live = !self.live;
@@ -1833,13 +1825,18 @@ impl eframe::App for App {
                 if particle_phase.is_some() {
                     ctx.request_repaint();
                 }
+                let zoom = self.arch_zoom;
+                let autorotate_state = self.arch_autorotate;
+                let mut toolbar_action: Option<ArchToolAction> = None;
                 card(ui, |ui| {
-                    let (clicked, new_yaw, new_pitch) = architecture_graph_3d(
+                    let (clicked, new_yaw, new_pitch, action) = architecture_graph_3d(
                         ui,
                         &op_tags,
                         selected,
                         yaw,
                         pitch,
+                        zoom,
+                        autorotate_state,
                         particle_phase,
                     );
                     if let Some(idx) = clicked {
@@ -1847,9 +1844,35 @@ impl eframe::App for App {
                     }
                     yaw = new_yaw;
                     pitch = new_pitch;
+                    toolbar_action = action;
                 });
                 self.arch_yaw = yaw;
                 self.arch_pitch = pitch;
+                if let Some(action) = toolbar_action {
+                    match action {
+                        ArchToolAction::Reset => {
+                            self.arch_yaw = 0.6;
+                            self.arch_pitch = 0.15;
+                            self.arch_zoom = 1.0;
+                            self.set_status("3D view reset".to_string());
+                        }
+                        ArchToolAction::ToggleAutorotate => {
+                            self.arch_autorotate = !self.arch_autorotate;
+                            self.set_status(format!(
+                                "auto-rotate: {}",
+                                if self.arch_autorotate { "on" } else { "off" }
+                            ));
+                        }
+                        ArchToolAction::ZoomIn => {
+                            self.arch_zoom = (self.arch_zoom * 1.2).min(3.0);
+                            self.set_status(format!("zoom: {:.2}x", self.arch_zoom));
+                        }
+                        ArchToolAction::ZoomOut => {
+                            self.arch_zoom = (self.arch_zoom / 1.2).max(0.5);
+                            self.set_status(format!("zoom: {:.2}x", self.arch_zoom));
+                        }
+                    }
+                }
                 if let Some(idx) = graph_click {
                     self.selected_op = if self.selected_op == Some(idx) {
                         None
@@ -1899,7 +1922,7 @@ impl eframe::App for App {
                             cosine_similarity_bar(ui, s);
                         }
                         ui.add_space(theme::SPACE_SM);
-                        if hypervector_heatmap_clickable(ui, &out, 80, 4.0) {
+                        if hypervector_heatmap_clickable(ui, &out, 100, 2.0) {
                             zoom_request = Some(ZoomTarget::Output);
                         }
                     });
@@ -2381,14 +2404,24 @@ fn cosine_similarity_bar(ui: &mut egui::Ui, sim: f64) {
 /// INPUT (left) → op nodes spread on a YZ-disc → BUNDLE → OUTPUT (right).
 /// User can drag horizontally to rotate the yaw.
 /// Returns (clicked_op_idx, new_yaw_after_drag).
+#[derive(Debug, Clone, Copy)]
+enum ArchToolAction {
+    Reset,
+    ToggleAutorotate,
+    ZoomIn,
+    ZoomOut,
+}
+
 fn architecture_graph_3d(
     ui: &mut egui::Ui,
     op_tags: &[String],
     selected: Option<usize>,
     yaw_in: f32,
     pitch_in: f32,
+    zoom: f32,
+    autorotate: bool,
     particle_phase: Option<f32>,
-) -> (Option<usize>, f32, f32) {
+) -> (Option<usize>, f32, f32, Option<ArchToolAction>) {
     let n_ops = op_tags.len();
     let height = 360.0_f32;
     let width = ui.available_width();
@@ -2409,7 +2442,7 @@ fn architecture_graph_3d(
     // Ops spread around a unit circle in the YZ plane at x=0.
     let cx = rect.center().x;
     let cy = rect.center().y;
-    let scale = (rect.width().min(rect.height()) * 0.32).min(180.0);
+    let scale = ((rect.width().min(rect.height()) * 0.32).min(180.0)) * zoom;
 
     // Perspective project a 3D point (x,y,z) → 2D screen point.
     // Apply yaw (Y axis) then pitch (X axis) then perspective.
@@ -2569,16 +2602,65 @@ fn architecture_graph_3d(
         }
     }
 
+    // Hovering toolbar (top-left of viewport).
+    let toolbar_origin = egui::pos2(rect.min.x + 8.0, rect.min.y + 8.0);
+    let mut tool_action: Option<ArchToolAction> = None;
+    let mut x = toolbar_origin.x;
+    let mut tool_button = |label: &str, hover: &str, active: bool| -> bool {
+        let btn_size = egui::vec2(30.0, 26.0);
+        let btn_rect = egui::Rect::from_min_size(egui::pos2(x, toolbar_origin.y), btn_size);
+        let resp = ui.interact(btn_rect, egui::Id::new(("arch_tool", label)), egui::Sense::click());
+        let fill = if active {
+            theme::ACCENT_MID
+        } else if resp.hovered() {
+            egui::Color32::from_rgb(0x2A, 0x32, 0x44)
+        } else {
+            egui::Color32::from_rgb(0x15, 0x1A, 0x26)
+        };
+        let stroke_col = if active {
+            theme::ACCENT_MID
+        } else {
+            egui::Color32::from_rgb(0x2A, 0x32, 0x44)
+        };
+        let p = ui.painter();
+        p.rect_filled(btn_rect, theme::RADIUS_SM, fill);
+        p.rect_stroke(btn_rect, theme::RADIUS_SM, egui::Stroke::new(1.0, stroke_col));
+        p.text(
+            btn_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            label,
+            egui::FontId::proportional(14.0),
+            egui::Color32::WHITE,
+        );
+        if resp.hovered() {
+            resp.on_hover_text(hover);
+        }
+        x += btn_size.x + 4.0;
+        ui.input(|i| i.pointer.any_click() && i.pointer.interact_pos().map(|p| btn_rect.contains(p)).unwrap_or(false))
+    };
+    if tool_button("⟲", "Reset view (yaw/pitch/zoom)", false) {
+        tool_action = Some(ArchToolAction::Reset);
+    }
+    if tool_button("🔄", "Toggle auto-rotate", autorotate) {
+        tool_action = Some(ArchToolAction::ToggleAutorotate);
+    }
+    if tool_button("+", "Zoom in", false) {
+        tool_action = Some(ArchToolAction::ZoomIn);
+    }
+    if tool_button("−", "Zoom out", false) {
+        tool_action = Some(ArchToolAction::ZoomOut);
+    }
+
     // Hint text.
     painter.text(
         egui::pos2(rect.min.x + 6.0, rect.max.y - 6.0),
         egui::Align2::LEFT_BOTTOM,
-        "drag horizontal = yaw · drag vertical = pitch · click op = select",
+        "drag horizontal = yaw · drag vertical = pitch · click op = select · toolbar top-left",
         egui::FontId::proportional(theme::SIZE_TINY),
         theme::TEXT_DIM,
     );
 
-    (clicked, yaw, pitch)
+    (clicked, yaw, pitch, tool_action)
 }
 
 /// Paint a node with a fake radial gradient (3D-sphere illusion).
