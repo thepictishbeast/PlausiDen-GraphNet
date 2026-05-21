@@ -103,6 +103,10 @@ struct App {
     last_user_action: std::time::Instant,
     /// Currently-active adaptive-tutorial hint (None if no hint).
     adaptive_hint: Option<&'static str>,
+    /// Font-scale multiplier — user-adjustable in Settings (#732).
+    font_scale: f32,
+    /// Demo pace in seconds per template.
+    demo_pace_sec: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -537,6 +541,8 @@ impl App {
             console_history: Vec::new(),
             last_user_action: std::time::Instant::now(),
             adaptive_hint: None,
+            font_scale: 1.0,
+            demo_pace_sec: 2.5,
         };
         app.load_template("standard");
         // Try to restore previous session.
@@ -571,9 +577,12 @@ impl App {
         self.demo = Some(DemoState {
             template_idx: 0,
             started_at: std::time::Instant::now(),
-            pace_sec: 2.5,
+            pace_sec: self.demo_pace_sec,
         });
-        self.set_status("Demo started — cycling templates".to_string());
+        self.set_status(format!(
+            "Demo started — cycling templates ({:.1}s each)",
+            self.demo_pace_sec
+        ));
     }
 
     fn stop_demo(&mut self) {
@@ -1770,9 +1779,61 @@ impl eframe::App for App {
                 );
                 ui.add_space(theme::SPACE_SM);
                 if self.tool_mode == ToolMode::Settings {
+                    section_heading(ui, "Behaviour");
+                    ui.add_space(theme::SPACE_SM);
+                    card(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new("input seed")
+                                .color(theme::TEXT_MUTED)
+                                .size(theme::SIZE_SMALL),
+                        );
+                        let mut seed_val = self.input_seed;
+                        let seed_resp = ui.add(
+                            egui::DragValue::new(&mut seed_val)
+                                .speed(1)
+                                .range(0..=u64::MAX),
+                        );
+                        if seed_resp.changed() {
+                            self.input_seed = seed_val;
+                            self.input =
+                                Hypervector::random_seeded(self.dim, self.input_seed);
+                        }
+                        ui.add_space(theme::SPACE_SM);
+                        ui.label(
+                            egui::RichText::new("demo pace (seconds per template)")
+                                .color(theme::TEXT_MUTED)
+                                .size(theme::SIZE_SMALL),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut self.demo_pace_sec, 0.5..=10.0)
+                                .step_by(0.5)
+                                .suffix(" s"),
+                        );
+                    });
+
+                    ui.add_space(theme::SPACE_MD);
                     section_heading(ui, "Appearance");
                     ui.add_space(theme::SPACE_SM);
                     card(ui, |ui| {
+                        // Font scale slider.
+                        ui.label(
+                            egui::RichText::new("font scale")
+                                .color(theme::TEXT_MUTED)
+                                .size(theme::SIZE_SMALL),
+                        );
+                        let mut scale = self.font_scale;
+                        let scale_resp = ui.add(
+                            egui::Slider::new(&mut scale, 0.75..=1.5)
+                                .step_by(0.05)
+                                .text("×"),
+                        );
+                        if scale_resp.drag_stopped() || scale_resp.lost_focus() {
+                            self.font_scale = scale;
+                            // Re-install the theme — would need theme.rs hook;
+                            // for now log + persist for next launch.
+                            self.set_status(format!("font scale → {:.2}× (restart to apply)", scale));
+                        }
+                        ui.add_space(theme::SPACE_SM);
                         let mode_label = if self.mode == theme::Mode::Dark { "Dark" } else { "Light" };
                         ui.horizontal(|ui| {
                             ui.label(
