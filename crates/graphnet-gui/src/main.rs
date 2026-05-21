@@ -215,6 +215,26 @@ const TEMPLATES: &[Template] = &[
         dim: 16_384,
         ops: &["identity", "dense"],
     },
+    Template {
+        name: "positional-encode",
+        summary: "4 permute · D=10k",
+        explanation: "Four circular permutations at staggered shifts. Each op \
+                      rotates the input by a different amount; the bundle is the \
+                      mean of those rotations. Models a positional-encoding step \
+                      in HDC: bind(item, permute(key, position)).",
+        dim: 10_000,
+        ops: &["permute", "permute", "permute", "permute"],
+    },
+    Template {
+        name: "anti-correlation",
+        summary: "dense + negate · D=10k",
+        explanation: "Demonstrates Negate (cos_sim(v, -v) = -1). A dense projection \
+                      followed by a negated dense projection. The bundle of v and -v \
+                      lies on the equator (cos_sim ≈ 0). Useful for null-space \
+                      experiments.",
+        dim: 10_000,
+        ops: &["dense", "negate", "dense"],
+    },
 ];
 
 const FIRST_RUN_PATH: &str = ".graphnet_seen_walkthrough";
@@ -561,6 +581,8 @@ impl eframe::App for App {
                 egui::Key::Num6,
                 egui::Key::Num7,
                 egui::Key::Num8,
+                egui::Key::Num9,
+                egui::Key::Num0,
             ];
             for (idx, key) in template_keys.iter().enumerate() {
                 if i.key_pressed(*key) {
@@ -1129,6 +1151,19 @@ impl eframe::App for App {
                 });
 
                 ui.add_space(theme::SPACE_LG);
+                // Animated pulse on the Run-forward button when in live mode.
+                let pulse_amp = if self.live {
+                    let t = self.spawn_time.elapsed().as_secs_f32();
+                    ((t * 4.0).sin() * 0.5 + 0.5) * 0.5 + 0.5
+                } else {
+                    1.0
+                };
+                let pulsed_fill = egui::Color32::from_rgba_unmultiplied(
+                    theme::ACCENT_MID.r(),
+                    theme::ACCENT_MID.g(),
+                    theme::ACCENT_MID.b(),
+                    (pulse_amp * 255.0) as u8,
+                );
                 ui.horizontal(|ui| {
                     let btn = ui.add(
                         egui::Button::new(
@@ -1136,12 +1171,15 @@ impl eframe::App for App {
                                 .size(theme::SIZE_BODY)
                                 .strong(),
                         )
-                        .fill(theme::ACCENT_MID)
+                        .fill(pulsed_fill)
                         .rounding(egui::Rounding::same(theme::RADIUS_MD))
                         .min_size(egui::vec2(240.0, 48.0)),
                     );
                     if btn.clicked() {
                         self.run_forward();
+                    }
+                    if self.live {
+                        ctx.request_repaint();
                     }
 
                     let live_label = if self.live {
