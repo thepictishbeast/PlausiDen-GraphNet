@@ -336,6 +336,9 @@ impl App {
         app.load_template("standard");
         // Try to restore previous session.
         let _ = app.restore();
+        // Run an initial forward so the user sees an output IMMEDIATELY
+        // — addresses "i can't tell if anything's working" at startup.
+        app.run_forward();
         // First-run walkthrough.
         let walkthrough_marker = persistent_state_path()
             .parent()
@@ -691,6 +694,11 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Force-maximize on first frame — some WMs ignore with_maximized().
+        // We send the viewport command exactly once.
+        if self.forwards == 1 && self.action_log.len() <= 1 {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+        }
         let mut advance_walkthrough = false;
         let mut undo_request = false;
         let mut redo_request = false;
@@ -1699,27 +1707,68 @@ impl eframe::App for App {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false; 2])
                     .show(ui, |ui| {
-                section_heading(ui, "Input");
-                ui.add_space(theme::SPACE_SM);
+                // Two-column layout: Input (left) + Output preview (right)
+                // when there's a recent forward. Single column otherwise.
                 let input_clone = self.input.clone();
-                card(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new(format!("seed = {}", self.input_seed))
-                                .size(theme::SIZE_BODY),
-                        );
+                let has_output = self.last_output.is_some();
+                let mut zoom_request_local: Option<ZoomTarget> = None;
+                let mut regen_clicked = false;
+                ui.columns(if has_output { 2 } else { 1 }, |cols| {
+                    // Left col: input.
+                    let left = &mut cols[0];
+                    section_heading(left, "Input");
+                    left.add_space(theme::SPACE_SM);
+                    card(left, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(format!("seed = {}", self.input_seed))
+                                    .size(theme::SIZE_BODY),
+                            );
+                            if mini_button(ui, "🎲", theme::TEXT_MUTED)
+                                .on_hover_text("regenerate input (R)")
+                                .clicked()
+                            {
+                                regen_clicked = true;
+                            }
+                        });
+                        ui.add_space(theme::SPACE_SM);
+                        if hypervector_heatmap_clickable(ui, &input_clone, 100, 2.0) {
+                            zoom_request_local = Some(ZoomTarget::Input);
+                        }
                     });
-                    ui.add_space(theme::SPACE_SM);
-                    if hypervector_heatmap_clickable(ui, &input_clone, 100, 2.0) {
-                        self.zoom_target = Some(ZoomTarget::Input);
+                    // Right col: latest output preview.
+                    if has_output {
+                        let right = &mut cols[1];
+                        let out = self.last_output.clone().expect("checked");
+                        section_heading(right, "Output (latest)");
+                        right.add_space(theme::SPACE_SM);
+                        card(right, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(format!("dim = {}", out.dim()))
+                                        .size(theme::SIZE_BODY),
+                                );
+                                if let Some(s) = self.last_cos_sim {
+                                    ui.label(
+                                        egui::RichText::new(format!("· cos_sim {s:+.3}"))
+                                            .size(theme::SIZE_SMALL)
+                                            .color(theme::TEXT_MUTED),
+                                    );
+                                }
+                            });
+                            ui.add_space(theme::SPACE_SM);
+                            if hypervector_heatmap_clickable(ui, &out, 100, 2.0) {
+                                zoom_request_local = Some(ZoomTarget::Output);
+                            }
+                        });
                     }
                 });
-                ui.add_space(theme::SPACE_SM);
-                ui.horizontal(|ui| {
-                    if mini_button(ui, "🎲  regenerate (R)", theme::TEXT_MUTED).clicked() {
-                        self.regenerate_input();
-                    }
-                });
+                if let Some(zt) = zoom_request_local {
+                    self.zoom_target = Some(zt);
+                }
+                if regen_clicked {
+                    self.regenerate_input();
+                }
 
                 ui.add_space(theme::SPACE_LG);
                 // Animated pulse on the Run-forward button when in live mode.
