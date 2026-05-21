@@ -50,6 +50,10 @@ struct App {
     walkthrough_step: Option<usize>,
     demo: Option<DemoState>,
     spawn_time: std::time::Instant,
+    /// Yaw rotation of the 3D arch graph, in radians.
+    arch_yaw: f32,
+    /// Auto-rotate the 3D arch graph?
+    arch_autorotate: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -244,6 +248,8 @@ impl App {
             walkthrough_step: None,
             demo: None,
             spawn_time: std::time::Instant::now(),
+            arch_yaw: 0.6,
+            arch_autorotate: false,
         };
         app.load_template("standard");
         // Try to restore previous session.
@@ -1152,8 +1158,16 @@ impl eframe::App for App {
 
                 ui.add_space(theme::SPACE_LG);
 
-                // Architecture graph viz.
-                section_heading(ui, "Architecture");
+                // Architecture graph viz (3D-projected, rotatable).
+                ui.horizontal(|ui| {
+                    section_heading(ui, "Architecture (3D)");
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            ui.checkbox(&mut self.arch_autorotate, "auto-rotate");
+                        },
+                    );
+                });
                 ui.add_space(theme::SPACE_SM);
                 let op_tags: Vec<String> = self
                     .stack
@@ -1161,13 +1175,22 @@ impl eframe::App for App {
                     .iter()
                     .map(|op| op.tag().to_string())
                     .collect();
+                if self.arch_autorotate {
+                    self.arch_yaw += 0.005;
+                    ctx.request_repaint();
+                }
+                let mut yaw = self.arch_yaw;
                 let selected = self.selected_op;
                 let mut graph_click: Option<usize> = None;
                 card(ui, |ui| {
-                    if let Some(idx) = architecture_graph(ui, &op_tags, selected) {
+                    let (clicked, new_yaw) =
+                        architecture_graph_3d(ui, &op_tags, selected, yaw);
+                    if let Some(idx) = clicked {
                         graph_click = Some(idx);
                     }
+                    yaw = new_yaw;
                 });
+                self.arch_yaw = yaw;
                 if let Some(idx) = graph_click {
                     self.selected_op = if self.selected_op == Some(idx) {
                         None
@@ -1684,8 +1707,201 @@ fn cosine_similarity_bar(ui: &mut egui::Ui, sim: f64) {
     );
 }
 
-/// Draw the Stack as a flow graph: INPUT → [op chips in parallel] → BUNDLE → OUTPUT.
-/// Returns Some(idx) if the user clicked the chip for op `idx`.
+/// Draw the Stack as a 3D-perspective-projected flow graph.
+/// INPUT (left) → op nodes spread on a YZ-disc → BUNDLE → OUTPUT (right).
+/// User can drag horizontally to rotate the yaw.
+/// Returns (clicked_op_idx, new_yaw_after_drag).
+fn architecture_graph_3d(
+    ui: &mut egui::Ui,
+    op_tags: &[String],
+    selected: Option<usize>,
+    yaw_in: f32,
+) -> (Option<usize>, f32) {
+    let n_ops = op_tags.len();
+    let height = 280.0_f32;
+    let width = ui.available_width().min(720.0);
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click_and_drag());
+    let painter = ui.painter_at(rect);
+
+    // Drag rotates yaw.
+    let mut yaw = yaw_in;
+    if response.dragged() {
+        yaw += response.drag_delta().x * 0.01;
+    }
+
+    // 3D camera: input at x=-1, bundle at x=+0.8, output at x=+1.2.
+    // Ops spread around a unit circle in the YZ plane at x=0.
+    let cx = rect.center().x;
+    let cy = rect.center().y;
+    let scale = (rect.width().min(rect.height()) * 0.32).min(180.0);
+
+    // Perspective project a 3D point (x,y,z) → 2D screen point.
+    // Apply yaw rotation around the Y axis first, then perspective.
+    let project = |x: f32, y: f32, z: f32| -> (egui::Pos2, f32) {
+        let (sy, cyaw) = yaw.sin_cos();
+        let xr = x * cyaw + z * sy;
+        let zr = -x * sy + z * cyaw;
+        // Camera at z = -3.
+        let cam_z = -3.0_f32;
+        let depth = zr - cam_z;
+        let persp = 2.4 / depth.max(0.1);
+        let sx = cx + xr * scale * persp;
+        let sy_screen = cy + y * scale * persp;
+        (egui::pos2(sx, sy_screen), depth)
+    };
+
+    // Build all node positions first so we can sort by depth.
+    enum Node<'a> {
+        Input,
+        Bundle,
+        Output,
+        Op(usize, &'a str),
+    }
+    let mut nodes: Vec<(Node, egui::Pos2, f32)> = Vec::new();
+    let (p_in, d_in) = project(-1.0, 0.0, 0.0);
+    nodes.push((Node::Input, p_in, d_in));
+    let (p_bundle, d_bundle) = project(0.8, 0.0, 0.0);
+    nodes.push((Node::Bundle, p_bundle, d_bundle));
+    let (p_out, d_out) = project(1.2, 0.0, 0.0);
+    nodes.push((Node::Output, p_out, d_out));
+
+    let mut op_screen: Vec<(egui::Pos2, f32)> = Vec::with_capacity(n_ops);
+    for (i, tag) in op_tags.iter().enumerate() {
+        // Spread on a circle in the YZ plane.
+        let angle = if n_ops == 1 {
+            0.0
+        } else {
+            std::f32::consts::TAU * (i as f32) / (n_ops as f32)
+        };
+        let (sa, ca) = angle.sin_cos();
+        let y = sa * 0.55;
+        let z = ca * 0.55;
+        let (p, d) = project(0.0, y, z);
+        op_screen.push((p, d));
+        nodes.push((Node::Op(i, tag.as_str()), p, d));
+    }
+
+    // Connectors drawn first, back-to-front.
+    for (i, (op_pos, op_d)) in op_screen.iter().enumerate() {
+        // Connector colour: muted unless selected.
+        let is_selected = selected == Some(i);
+        let colour = if is_selected {
+            theme::op_color(&op_tags[i])
+        } else {
+            theme::TEXT_MUTED
+        };
+        let stroke_w = if is_selected { 1.8 } else { 1.0 };
+        // INPUT → op
+        painter.line_segment([p_in, *op_pos], egui::Stroke::new(stroke_w, colour));
+        // op → BUNDLE
+        painter.line_segment([*op_pos, p_bundle], egui::Stroke::new(stroke_w, colour));
+        let _ = op_d;
+    }
+    painter.line_segment(
+        [p_bundle, p_out],
+        egui::Stroke::new(1.5, theme::TEXT_MUTED),
+    );
+
+    // Sort all nodes back-to-front by depth (greater depth = further away,
+    // drawn first).
+    nodes.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut clicked: Option<usize> = None;
+    let click_pos = if response.clicked() {
+        response.interact_pointer_pos()
+    } else {
+        None
+    };
+
+    for (kind, pos, depth) in &nodes {
+        let size_mul = (3.0 / depth.max(0.1)).clamp(0.5, 1.6);
+        match kind {
+            Node::Input => {
+                let r = 24.0 * size_mul;
+                painter.circle_filled(*pos, r, theme::ACCENT_BLUE);
+                painter.text(
+                    *pos,
+                    egui::Align2::CENTER_CENTER,
+                    "INPUT",
+                    egui::FontId::proportional(theme::SIZE_TINY * size_mul),
+                    egui::Color32::WHITE,
+                );
+            }
+            Node::Bundle => {
+                let r = 24.0 * size_mul;
+                painter.circle_filled(*pos, r, theme::ACCENT_PURPLE);
+                painter.text(
+                    *pos,
+                    egui::Align2::CENTER_CENTER,
+                    "BUNDLE",
+                    egui::FontId::proportional(theme::SIZE_TINY * size_mul),
+                    egui::Color32::WHITE,
+                );
+            }
+            Node::Output => {
+                let r = 24.0 * size_mul;
+                painter.circle_filled(*pos, r, theme::ACCENT_MID);
+                painter.text(
+                    *pos,
+                    egui::Align2::CENTER_CENTER,
+                    "OUT",
+                    egui::FontId::proportional(theme::SIZE_TINY * size_mul),
+                    egui::Color32::WHITE,
+                );
+            }
+            Node::Op(i, tag) => {
+                let colour = theme::op_color(tag);
+                let is_selected = selected == Some(*i);
+                let r = 22.0 * size_mul;
+                let fill = if is_selected {
+                    colour
+                } else {
+                    colour.gamma_multiply(0.4)
+                };
+                painter.circle_filled(*pos, r, fill);
+                painter.circle_stroke(
+                    *pos,
+                    r,
+                    egui::Stroke::new(if is_selected { 2.0 } else { 1.0 }, colour),
+                );
+                painter.text(
+                    *pos,
+                    egui::Align2::CENTER_CENTER,
+                    format!("[{i}]\n{tag}"),
+                    egui::FontId::proportional(theme::SIZE_TINY * size_mul),
+                    if is_selected {
+                        egui::Color32::WHITE
+                    } else {
+                        colour
+                    },
+                );
+
+                if let Some(cp) = click_pos {
+                    let dx = cp.x - pos.x;
+                    let dy = cp.y - pos.y;
+                    if (dx * dx + dy * dy).sqrt() <= r + 4.0 {
+                        clicked = Some(*i);
+                    }
+                }
+            }
+        }
+    }
+
+    // Hint text.
+    painter.text(
+        egui::pos2(rect.min.x + 6.0, rect.max.y - 6.0),
+        egui::Align2::LEFT_BOTTOM,
+        "drag to rotate · click an op to select",
+        egui::FontId::proportional(theme::SIZE_TINY),
+        theme::TEXT_DIM,
+    );
+
+    (clicked, yaw)
+}
+
+/// 2D flow graph (kept for fallback / unit tests).
+#[allow(dead_code)]
 fn architecture_graph(
     ui: &mut egui::Ui,
     op_tags: &[String],
