@@ -21,10 +21,11 @@ The plan covers:
 
 1. **One bounded shippable unit per loop tick.** Don't try to ship a whole
    phase in one tick; smallest viable progress that advances the phase.
-2. **Mandatory pre-push gate.** `cargo fmt --all -- --check` + `cargo clippy
-   --workspace --all-targets --locked -- -D warnings` + `cargo test
-   --workspace --locked` + `pytest python/tests/` (when python touched).
-   Any failure → fix, do NOT push.
+2. **Mandatory pre-push gate.** Run `./scripts/check.sh` from repo root. It
+   bundles `cargo fmt --check` + `cargo clippy -D warnings` + `cargo test` +
+   `cargo doc -D warnings` + `ruff check` + `pytest` + `cargo audit`. Mirrors
+   `.github/workflows/ci.yml`. Any failure → fix, do NOT push.
+   First-time setup: `python3 -m venv .venv && .venv/bin/pip install ruff pytest hypothesis maturin`.
 3. **No `unwrap` / `expect` in library code** without a `SAFETY:` comment
    or `// test-only` justification (per AVP-2 doctrine).
 4. **No `unsafe` blocks** unless absolutely necessary; if so, document with
