@@ -43,6 +43,8 @@ struct App {
     live_last_frame: std::time::Instant,
     status_msg: Option<(String, std::time::Instant)>,
     mode: theme::Mode,
+    show_help: bool,
+    reseed_counter: u64,
 }
 
 const TEMPLATES: &[(&str, &str, usize)] = &[
@@ -74,6 +76,8 @@ impl App {
             live_last_frame: std::time::Instant::now(),
             status_msg: None,
             mode: theme::Mode::Dark,
+            show_help: false,
+            reseed_counter: 0,
         };
         app.load_template("stack-standard");
         // Try to restore previous session.
@@ -159,6 +163,28 @@ impl App {
         if idx < self.stack.len() {
             self.stack.remove_operation(idx);
         }
+    }
+
+    /// Replace the key on a Dense/HrrBind op without removing it. No-op
+    /// on Identity (no key to rotate).
+    fn reseed_op(&mut self, idx: usize) {
+        if idx >= self.stack.len() {
+            return;
+        }
+        let tag = self.stack.operations()[idx].tag().to_string();
+        self.reseed_counter = self.reseed_counter.wrapping_add(1);
+        let new_seed = 9_000 + self.reseed_counter * 7 + idx as u64;
+        let new_op = match tag.as_str() {
+            "dense" => Operation::Dense {
+                key: Hypervector::random_seeded(self.dim, new_seed),
+            },
+            "hrr_bind" => Operation::HrrBind {
+                key: Hypervector::random_seeded(self.dim, new_seed),
+            },
+            _ => return,
+        };
+        self.stack.replace_operation(idx, new_op);
+        self.set_status(format!("reseeded op [{idx}] {tag} → seed={new_seed}"));
     }
 
     fn arch_summary(&self) -> ArchSummary {
@@ -295,6 +321,12 @@ impl eframe::App for App {
             }
             if (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::O) {
                 self.load_yaml();
+            }
+            if i.key_pressed(egui::Key::H) || i.key_pressed(egui::Key::F1) {
+                self.show_help = !self.show_help;
+            }
+            if i.key_pressed(egui::Key::Escape) {
+                self.show_help = false;
             }
         });
 
@@ -523,14 +555,22 @@ impl eframe::App for App {
                     .map(|(i, op)| (i, op.tag().to_string()))
                     .collect();
                 let mut to_remove: Option<usize> = None;
+                let mut to_reseed: Option<usize> = None;
                 for (idx, tag) in &ops {
-                    if op_chip_with_remove(ui, *idx, tag) {
+                    let action = op_chip_actions(ui, *idx, tag);
+                    if action.remove {
                         to_remove = Some(*idx);
+                    }
+                    if action.reseed {
+                        to_reseed = Some(*idx);
                     }
                     ui.add_space(theme::SPACE_XS);
                 }
                 if let Some(i) = to_remove {
                     self.remove_op(i);
+                }
+                if let Some(i) = to_reseed {
+                    self.reseed_op(i);
                 }
 
                 ui.add_space(theme::SPACE_SM);
@@ -550,6 +590,53 @@ impl eframe::App for App {
                     self.reset_stack();
                 }
             });
+
+        // Help overlay.
+        if self.show_help {
+            egui::Window::new("Keyboard shortcuts  (Esc / H to close)")
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .collapsible(false)
+                .resizable(false)
+                .frame(
+                    egui::Frame::none()
+                        .fill(theme::BG_CARD)
+                        .stroke(egui::Stroke::new(1.0, theme::BORDER_ACCENT))
+                        .rounding(egui::Rounding::same(theme::RADIUS_LG))
+                        .inner_margin(egui::Margin::same(theme::SPACE_XL)),
+                )
+                .show(ctx, |ui| {
+                    let pairs = [
+                        ("Space", "run forward"),
+                        ("R", "regenerate input"),
+                        ("L", "toggle live continuous mode"),
+                        ("1 / 2 / 3 / 4", "load template"),
+                        ("⌘S / Ctrl+S", "save YAML"),
+                        ("⌘O / Ctrl+O", "load YAML"),
+                        ("H / F1", "toggle this help"),
+                        ("Esc", "close help"),
+                    ];
+                    egui::Grid::new("help_grid")
+                        .num_columns(2)
+                        .spacing([theme::SPACE_XL, theme::SPACE_SM])
+                        .show(ui, |ui| {
+                            for (key, action) in pairs {
+                                ui.label(
+                                    egui::RichText::new(key)
+                                        .color(theme::ACCENT_BLUE)
+                                        .size(theme::SIZE_BODY)
+                                        .monospace()
+                                        .strong(),
+                                );
+                                ui.label(
+                                    egui::RichText::new(action)
+                                        .color(theme::TEXT_PRIMARY)
+                                        .size(theme::SIZE_BODY),
+                                );
+                                ui.end_row();
+                            }
+                        });
+                });
+        }
 
         egui::CentralPanel::default()
             .frame(
@@ -801,8 +888,14 @@ fn mini_button(ui: &mut egui::Ui, text: &str, accent: egui::Color32) -> egui::Re
     )
 }
 
-fn op_chip_with_remove(ui: &mut egui::Ui, idx: usize, tag: &str) -> bool {
-    let mut removed = false;
+#[derive(Default)]
+struct OpChipAction {
+    remove: bool,
+    reseed: bool,
+}
+
+fn op_chip_actions(ui: &mut egui::Ui, idx: usize, tag: &str) -> OpChipAction {
+    let mut action = OpChipAction::default();
     let bg = theme::op_color(tag).gamma_multiply(0.25);
     let fg = theme::op_color(tag);
     egui::Frame::none()
@@ -825,7 +918,7 @@ fn op_chip_with_remove(ui: &mut egui::Ui, idx: usize, tag: &str) -> bool {
                         .strong(),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let resp = ui.add(
+                    let remove = ui.add(
                         egui::Button::new(
                             egui::RichText::new("×")
                                 .size(theme::SIZE_BODY)
@@ -835,13 +928,31 @@ fn op_chip_with_remove(ui: &mut egui::Ui, idx: usize, tag: &str) -> bool {
                         .stroke(egui::Stroke::NONE)
                         .min_size(egui::vec2(20.0, 20.0)),
                     );
-                    if resp.clicked() {
-                        removed = true;
+                    if remove.clicked() {
+                        action.remove = true;
+                    }
+                    // Reseed only meaningful for keyed ops.
+                    if matches!(tag, "dense" | "hrr_bind") {
+                        let reseed = ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("⟳")
+                                        .size(theme::SIZE_SMALL)
+                                        .color(fg),
+                                )
+                                .fill(egui::Color32::TRANSPARENT)
+                                .stroke(egui::Stroke::NONE)
+                                .min_size(egui::vec2(20.0, 20.0)),
+                            )
+                            .on_hover_text("reseed key");
+                        if reseed.clicked() {
+                            action.reseed = true;
+                        }
                     }
                 });
             });
         });
-    removed
+    action
 }
 
 fn hypervector_heatmap(ui: &mut egui::Ui, v: &Hypervector, cols: usize, cell: f32) {
@@ -849,7 +960,8 @@ fn hypervector_heatmap(ui: &mut egui::Ui, v: &Hypervector, cols: usize, cell: f3
     let rows = dim.div_ceil(cols);
     let total_w = cols as f32 * cell;
     let total_h = rows as f32 * cell;
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(total_w, total_h), egui::Sense::hover());
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(total_w, total_h), egui::Sense::hover());
     let painter = ui.painter_at(rect);
     let data = v.as_slice();
     for i in 0..dim {
@@ -867,6 +979,21 @@ fn hypervector_heatmap(ui: &mut egui::Ui, v: &Hypervector, cols: usize, cell: f3
             0.0,
             colour,
         );
+    }
+    // Hover tooltip: pinpoint the cell under the cursor.
+    if let Some(pos) = response.hover_pos() {
+        let local = pos - rect.min;
+        let c = (local.x / cell).floor() as i64;
+        let r = (local.y / cell).floor() as i64;
+        if c >= 0 && r >= 0 && (c as usize) < cols && (r as usize) < rows {
+            let idx = (r as usize) * cols + (c as usize);
+            if idx < dim {
+                response.on_hover_text_at_pointer(format!(
+                    "index {idx}  →  {:+}",
+                    data[idx]
+                ));
+            }
+        }
     }
 }
 
