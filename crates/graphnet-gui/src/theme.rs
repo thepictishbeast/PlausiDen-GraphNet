@@ -53,7 +53,35 @@ pub fn op_color(tag: &str) -> egui::Color32 {
     }
 }
 
+/// Light-mode counterparts to the dark palette. Used when [`install_light`]
+/// is called. WCAG-AA contrast preserved.
+pub const BG_LIGHT: egui::Color32 = egui::Color32::from_rgb(0xFA, 0xFA, 0xFD);
+pub const BG_CARD_LIGHT: egui::Color32 = egui::Color32::from_rgb(0xFF, 0xFF, 0xFF);
+pub const BG_CARD_HOVER_LIGHT: egui::Color32 = egui::Color32::from_rgb(0xEE, 0xEE, 0xF6);
+pub const TEXT_PRIMARY_LIGHT: egui::Color32 = egui::Color32::from_rgb(0x12, 0x16, 0x22);
+pub const TEXT_MUTED_LIGHT: egui::Color32 = egui::Color32::from_rgb(0x55, 0x5C, 0x73);
+pub const TEXT_DIM_LIGHT: egui::Color32 = egui::Color32::from_rgb(0x9A, 0xA0, 0xB3);
+pub const BORDER_SUBTLE_LIGHT: egui::Color32 = egui::Color32::from_rgb(0xE0, 0xE3, 0xEC);
+
+/// Theme variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Dark,
+    Light,
+}
+
+pub fn install_mode(ctx: &egui::Context, mode: Mode) {
+    match mode {
+        Mode::Dark => install(ctx),
+        Mode::Light => install_light(ctx),
+    }
+}
+
 pub fn install(ctx: &egui::Context) {
+    install_dark(ctx);
+}
+
+pub fn install_dark(ctx: &egui::Context) {
     let mut style = (*ctx.style()).clone();
 
     use egui::FontFamily::Proportional;
@@ -116,6 +144,106 @@ pub fn install(ctx: &egui::Context) {
     style.visuals.extreme_bg_color = BG;
 
     ctx.set_style(style);
+}
+
+pub fn install_light(ctx: &egui::Context) {
+    let mut style = (*ctx.style()).clone();
+    use egui::FontFamily::Proportional;
+    use egui::FontId;
+    use egui::TextStyle as TS;
+    style.text_styles.insert(TS::Heading, FontId::new(SIZE_H1, Proportional));
+    style.text_styles.insert(TS::Body, FontId::new(SIZE_BODY, Proportional));
+    style.text_styles.insert(TS::Button, FontId::new(SIZE_BODY, Proportional));
+    style.text_styles.insert(TS::Small, FontId::new(SIZE_SMALL, Proportional));
+    style
+        .text_styles
+        .insert(TS::Monospace, FontId::new(SIZE_SMALL, egui::FontFamily::Monospace));
+
+    style.spacing.item_spacing = egui::vec2(SPACE_SM, SPACE_SM);
+    style.spacing.window_margin = egui::Margin::same(SPACE_LG);
+    style.spacing.button_padding = egui::vec2(SPACE_LG, SPACE_MD);
+    style.spacing.menu_margin = egui::Margin::same(SPACE_SM);
+
+    style.visuals.dark_mode = false;
+    style.visuals.override_text_color = Some(TEXT_PRIMARY_LIGHT);
+    style.visuals.panel_fill = BG_LIGHT;
+    style.visuals.window_fill = BG_LIGHT;
+    style.visuals.window_stroke = egui::Stroke::new(1.0, BORDER_SUBTLE_LIGHT);
+    style.visuals.window_rounding = egui::Rounding::same(RADIUS_LG);
+
+    let card_radius = egui::Rounding::same(RADIUS_MD);
+    style.visuals.widgets.noninteractive.bg_fill = BG_CARD_LIGHT;
+    style.visuals.widgets.noninteractive.bg_stroke =
+        egui::Stroke::new(1.0, BORDER_SUBTLE_LIGHT);
+    style.visuals.widgets.noninteractive.fg_stroke =
+        egui::Stroke::new(1.0, TEXT_PRIMARY_LIGHT);
+    style.visuals.widgets.noninteractive.rounding = card_radius;
+    style.visuals.widgets.inactive.bg_fill = BG_CARD_LIGHT;
+    style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, BORDER_SUBTLE_LIGHT);
+    style.visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, TEXT_PRIMARY_LIGHT);
+    style.visuals.widgets.inactive.rounding = card_radius;
+    style.visuals.widgets.inactive.weak_bg_fill = BG_CARD_LIGHT;
+    style.visuals.widgets.hovered.bg_fill = BG_CARD_HOVER_LIGHT;
+    style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, BORDER_ACCENT);
+    style.visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, TEXT_PRIMARY_LIGHT);
+    style.visuals.widgets.hovered.rounding = card_radius;
+    style.visuals.widgets.hovered.weak_bg_fill = BG_CARD_HOVER_LIGHT;
+    style.visuals.widgets.active.bg_fill = ACCENT_MID;
+    style.visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, ACCENT_MID);
+    style.visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+    style.visuals.widgets.active.rounding = card_radius;
+    style.visuals.widgets.active.weak_bg_fill = ACCENT_MID;
+
+    style.visuals.selection.bg_fill = ACCENT_MID.gamma_multiply(0.25);
+    style.visuals.selection.stroke = egui::Stroke::new(1.0, ACCENT_MID);
+    style.visuals.hyperlink_color = ACCENT_BLUE;
+    style.visuals.faint_bg_color = BG_CARD_LIGHT;
+    style.visuals.extreme_bg_color = BG_LIGHT;
+
+    ctx.set_style(style);
+}
+
+/// Return the BG color appropriate for the current mode.
+pub fn bg_for(mode: Mode) -> egui::Color32 {
+    match mode {
+        Mode::Dark => BG,
+        Mode::Light => BG_LIGHT,
+    }
+}
+
+pub fn bg_card_for(mode: Mode) -> egui::Color32 {
+    match mode {
+        Mode::Dark => BG_CARD,
+        Mode::Light => BG_CARD_LIGHT,
+    }
+}
+
+pub fn bg_card_hover_for(mode: Mode) -> egui::Color32 {
+    match mode {
+        Mode::Dark => BG_CARD_HOVER,
+        Mode::Light => BG_CARD_HOVER_LIGHT,
+    }
+}
+
+pub fn text_muted_for(mode: Mode) -> egui::Color32 {
+    match mode {
+        Mode::Dark => TEXT_MUTED,
+        Mode::Light => TEXT_MUTED_LIGHT,
+    }
+}
+
+pub fn text_dim_for(mode: Mode) -> egui::Color32 {
+    match mode {
+        Mode::Dark => TEXT_DIM,
+        Mode::Light => TEXT_DIM_LIGHT,
+    }
+}
+
+pub fn border_subtle_for(mode: Mode) -> egui::Color32 {
+    match mode {
+        Mode::Dark => BORDER_SUBTLE,
+        Mode::Light => BORDER_SUBTLE_LIGHT,
+    }
 }
 
 pub fn paint_gradient(painter: &egui::Painter, rect: egui::Rect) {

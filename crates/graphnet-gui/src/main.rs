@@ -7,7 +7,9 @@
 mod theme;
 
 use eframe::egui;
-use graphnet_engine::{stack_from_yaml, stack_to_yaml, ArchSummary, Model, Operation, Stack};
+use graphnet_engine::{
+    stack_from_yaml, stack_to_yaml, ArchSummary, ForwardTrace, Model, Operation, Stack,
+};
 use plausiden_hdc::{cos_sim, Hypervector};
 
 const YAML_PATH: &str = "graphnet-stack.yaml";
@@ -17,6 +19,8 @@ struct App {
     input_seed: u64,
     input: Hypervector,
     last_output: Option<Hypervector>,
+    last_trace: Option<ForwardTrace>,
+    selected_op: Option<usize>,
     last_latency_ms: Option<f64>,
     last_cos_sim: Option<f64>,
     forwards: u64,
@@ -26,6 +30,7 @@ struct App {
     live_fps: f64,
     live_last_frame: std::time::Instant,
     status_msg: Option<(String, std::time::Instant)>,
+    mode: theme::Mode,
 }
 
 const TEMPLATES: &[(&str, &str, usize)] = &[
@@ -37,12 +42,14 @@ const TEMPLATES: &[(&str, &str, usize)] = &[
 
 impl App {
     fn new(ctx: &egui::Context) -> Self {
-        theme::install(ctx);
+        theme::install_dark(ctx);
         let mut app = Self {
             stack: Stack::new(10_000),
             input_seed: 42,
             input: Hypervector::random_seeded(10_000, 42),
             last_output: None,
+            last_trace: None,
+            selected_op: None,
             last_latency_ms: None,
             last_cos_sim: None,
             forwards: 0,
@@ -52,9 +59,18 @@ impl App {
             live_fps: 0.0,
             live_last_frame: std::time::Instant::now(),
             status_msg: None,
+            mode: theme::Mode::Dark,
         };
         app.load_template("stack-standard");
         app
+    }
+
+    fn toggle_mode(&mut self, ctx: &egui::Context) {
+        self.mode = match self.mode {
+            theme::Mode::Dark => theme::Mode::Light,
+            theme::Mode::Light => theme::Mode::Dark,
+        };
+        theme::install_mode(ctx, self.mode);
     }
 
     fn load_template(&mut self, name: &'static str) {
@@ -97,6 +113,8 @@ impl App {
             _ => {}
         }
         self.last_output = None;
+        self.last_trace = None;
+        self.selected_op = None;
         self.last_latency_ms = None;
         self.last_cos_sim = None;
     }
@@ -133,11 +151,12 @@ impl App {
 
     fn run_forward(&mut self) {
         let started = std::time::Instant::now();
-        if let Ok(out) = self.stack.forward(&self.input) {
+        if let Ok(trace) = self.stack.forward_with_trace(&self.input) {
             #[allow(clippy::cast_precision_loss)]
             let ms = started.elapsed().as_micros() as f64 / 1000.0;
-            self.last_cos_sim = cos_sim(&self.input, &out).ok();
-            self.last_output = Some(out);
+            self.last_cos_sim = cos_sim(&self.input, &trace.bundled).ok();
+            self.last_output = Some(trace.bundled.clone());
+            self.last_trace = Some(trace);
             self.last_latency_ms = Some(ms);
             self.forwards = self.forwards.saturating_add(1);
         }
@@ -246,9 +265,31 @@ impl eframe::App for App {
                             .color(egui::Color32::from_white_alpha(190)),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let toggle = ui.add(
+                            egui::Button::new(
+                                egui::RichText::new(match self.mode {
+                                    theme::Mode::Dark => "☀ light",
+                                    theme::Mode::Light => "☾ dark",
+                                })
+                                .size(theme::SIZE_SMALL)
+                                .color(egui::Color32::WHITE)
+                                .strong(),
+                            )
+                            .fill(egui::Color32::from_white_alpha(40))
+                            .stroke(egui::Stroke::new(
+                                1.0,
+                                egui::Color32::from_white_alpha(120),
+                            ))
+                            .rounding(egui::Rounding::same(theme::RADIUS_SM))
+                            .min_size(egui::vec2(72.0, 28.0)),
+                        );
+                        if toggle.clicked() {
+                            self.toggle_mode(ctx);
+                        }
+                        ui.add_space(theme::SPACE_MD);
                         ui.label(
                             egui::RichText::new(
-                                "[Space] forward  [R] regen  [L] live  [1-4] template  [⌘S/⌘O] yaml",
+                                "[Space] fwd · [R] regen · [L] live · [1-4] tpl · [⌘S/⌘O] yaml",
                             )
                             .size(theme::SIZE_TINY)
                             .color(egui::Color32::from_white_alpha(160))
@@ -498,6 +539,71 @@ impl eframe::App for App {
                         ui.add_space(theme::SPACE_SM);
                         hypervector_heatmap(ui, &out, 80, 4.0);
                     });
+
+                    // Per-op output inspector (uses ForwardTrace).
+                    if let Some(trace) = self.last_trace.clone() {
+                        ui.add_space(theme::SPACE_LG);
+                        section_heading(ui, "Per-op inspector");
+                        ui.add_space(theme::SPACE_SM);
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("View:")
+                                    .color(theme::TEXT_MUTED)
+                                    .size(theme::SIZE_SMALL),
+                            );
+                            for op_out in &trace.per_op {
+                                let active = self.selected_op == Some(op_out.index);
+                                let accent = theme::op_color(&op_out.tag);
+                                let btn = ui.add(
+                                    egui::Button::new(
+                                        egui::RichText::new(format!(
+                                            "[{}] {}",
+                                            op_out.index, op_out.tag
+                                        ))
+                                        .size(theme::SIZE_SMALL)
+                                        .color(if active {
+                                            egui::Color32::WHITE
+                                        } else {
+                                            accent
+                                        })
+                                        .strong(),
+                                    )
+                                    .fill(if active {
+                                        accent
+                                    } else {
+                                        accent.gamma_multiply(0.18)
+                                    })
+                                    .stroke(egui::Stroke::new(1.0, accent))
+                                    .rounding(egui::Rounding::same(theme::RADIUS_SM)),
+                                );
+                                if btn.clicked() {
+                                    self.selected_op = if active {
+                                        None
+                                    } else {
+                                        Some(op_out.index)
+                                    };
+                                }
+                            }
+                        });
+                        if let Some(idx) = self.selected_op {
+                            if let Some(op_out) = trace.per_op.get(idx) {
+                                ui.add_space(theme::SPACE_SM);
+                                let sim_to_input = cos_sim(&self.input, &op_out.output).ok();
+                                let sim_to_out = cos_sim(&op_out.output, &trace.bundled).ok();
+                                card(ui, |ui| {
+                                    metric(ui, "op", &format!("[{}] {}", op_out.index, op_out.tag));
+                                    if let Some(s) = sim_to_input {
+                                        metric(ui, "cos_sim → input", &format!("{s:+.3}"));
+                                    }
+                                    if let Some(s) = sim_to_out {
+                                        metric(ui, "cos_sim → bundled", &format!("{s:+.3}"));
+                                    }
+                                    ui.add_space(theme::SPACE_SM);
+                                    hypervector_heatmap(ui, &op_out.output, 80, 4.0);
+                                });
+                            }
+                        }
+                    }
                 } else {
                     ui.label(
                         egui::RichText::new("(click ‘Run forward’ or press Space)")
