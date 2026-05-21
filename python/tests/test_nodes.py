@@ -128,13 +128,85 @@ def test_bind_with_wrong_input_count_errors() -> None:
             g.execute()
 
 
-def test_unwired_kind_errors_clearly() -> None:
+def test_all_kinds_wired_natively() -> None:
+    # Phase 11 wave 2 closeout: every NodeKind has a native implementation.
+    from graphnet.nodes import available_kinds
+
+    pairs = available_kinds()
+    unwired = [name for name, ok in pairs if not ok]
+    assert unwired == [], f"expected all kinds wired, but unwired: {unwired}"
+
+
+@pytest.mark.skipif(
+    not graphnet.native_available(),
+    reason="needs native graphnet",
+)
+def test_hrr_bind_node_executes() -> None:
     g = NodeGraph()
-    a = g.add(NodeKind.RANDOM, params={"dim": 100, "seed": 1})
-    g.add(NodeKind.HRR_BIND, inputs=[a, a])
-    if graphnet.native_available():
-        with pytest.raises(NodeGraphError, match="not yet wired"):
-            g.execute()
+    a = g.add(NodeKind.RANDOM, params={"dim": 1024, "seed": 1})
+    b = g.add(NodeKind.RANDOM, params={"dim": 1024, "seed": 2})
+    c = g.add(NodeKind.HRR_BIND, inputs=[a, b])
+    results = g.execute()
+    assert results[c].dim() == 1024
+
+
+@pytest.mark.skipif(
+    not graphnet.native_available(),
+    reason="needs native graphnet",
+)
+def test_permute_node_executes() -> None:
+    g = NodeGraph()
+    v = g.add(NodeKind.RANDOM, params={"dim": 1000, "seed": 1})
+    p = g.add(NodeKind.PERMUTE, inputs=[v], params={"shift": 3})
+    results = g.execute()
+    assert results[p].dim() == 1000
+    assert results[p] != results[v]
+
+
+@pytest.mark.skipif(
+    not graphnet.native_available(),
+    reason="needs native graphnet",
+)
+def test_negate_node_is_self_inverse() -> None:
+    g = NodeGraph()
+    v = g.add(NodeKind.RANDOM, params={"dim": 1000, "seed": 1})
+    n1 = g.add(NodeKind.NEGATE, inputs=[v])
+    n2 = g.add(NodeKind.NEGATE, inputs=[n1])
+    results = g.execute()
+    assert results[n2] == results[v]
+
+
+@pytest.mark.skipif(
+    not graphnet.native_available(),
+    reason="needs native graphnet",
+)
+def test_encode_set_is_bundle() -> None:
+    g = NodeGraph()
+    a = g.add(NodeKind.RANDOM, params={"dim": 1000, "seed": 1})
+    b = g.add(NodeKind.RANDOM, params={"dim": 1000, "seed": 2})
+    via_set = g.add(NodeKind.ENCODE_SET, inputs=[a, b])
+    via_bundle = g.add(NodeKind.BUNDLE, inputs=[a, b])
+    results = g.execute()
+    assert results[via_set] == results[via_bundle]
+
+
+@pytest.mark.skipif(
+    not graphnet.native_available(),
+    reason="needs native graphnet",
+)
+def test_encode_pair_unbinds_to_value() -> None:
+    g = NodeGraph()
+    ka = g.add(NodeKind.RANDOM, params={"dim": 10_000, "seed": 1})
+    va = g.add(NodeKind.RANDOM, params={"dim": 10_000, "seed": 2})
+    kb = g.add(NodeKind.RANDOM, params={"dim": 10_000, "seed": 3})
+    vb = g.add(NodeKind.RANDOM, params={"dim": 10_000, "seed": 4})
+    pair = g.add(NodeKind.ENCODE_PAIR, inputs=[ka, va, kb, vb])
+    # Recovering va via unbind(pair, ka) should be similar to va.
+    recovered = g.add(NodeKind.UNBIND, inputs=[pair, ka])
+    sim = g.add(NodeKind.COS_SIM, inputs=[recovered, va])
+    results = g.execute()
+    # With 2-source pair at D=10_000, recovery cos_sim ≈ 0.5.
+    assert results[sim] > 0.3
 
 
 def test_hdcnode_repr_includes_kind() -> None:

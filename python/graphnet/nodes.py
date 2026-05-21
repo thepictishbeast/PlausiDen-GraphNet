@@ -196,29 +196,77 @@ def _execute_node(node: HdcNode, results: dict[int, Any], gn: Any) -> Any:
         return gn.hamming(results[node.inputs[0]], results[node.inputs[1]])
 
     if kind is NodeKind.NEGATE:
-        # Bipolar negate: v ↔ -v. Native primitive not yet exposed.
-        # Phase-17 follow-up: add `plausiden_hdc::negate` + wire here.
         _expect_inputs(node, 1)
-        raise NodeGraphError(
-            "negate node not yet implemented natively; deferred to Phase 17 "
-            "extension"
-        )
+        return gn.negate(results[node.inputs[0]])
 
-    if kind in (
-        NodeKind.INVERSE,
-        NodeKind.THRESHOLD,
-        NodeKind.HRR_BIND,
-        NodeKind.HRR_UNBIND,
-        NodeKind.PERMUTE,
-        NodeKind.POSITION,
-        NodeKind.ENCODE_SEQUENCE,
-        NodeKind.ENCODE_SET,
-        NodeKind.ENCODE_PAIR,
-    ):
-        raise NodeGraphError(
-            f"node kind `{kind.value}` not yet wired to a native op; "
-            "deferred to Phase 17 extension tick"
-        )
+    if kind is NodeKind.INVERSE:
+        # Bipolar HDC is self-inverse: bind(v, v⁻¹) where v⁻¹ = v.
+        _expect_inputs(node, 1)
+        return results[node.inputs[0]]
+
+    if kind is NodeKind.THRESHOLD:
+        # Hypervectors are already bipolar — threshold is the identity.
+        _expect_inputs(node, 1)
+        return results[node.inputs[0]]
+
+    if kind is NodeKind.PERMUTE:
+        _expect_inputs(node, 1)
+        shift = int(node.params.get("shift", 1))
+        return gn.permute(results[node.inputs[0]], shift)
+
+    if kind in (NodeKind.HRR_BIND, NodeKind.HRR_UNBIND):
+        # HRR (FFT) binding is bipolar-self-inverse like dense bind.
+        # Wire via a one-op Stack so the existing Operation::HrrBind kernel
+        # runs.
+        _expect_inputs(node, 2)
+        input_vec = results[node.inputs[0]]
+        key = results[node.inputs[1]]
+        s = gn.Stack(input_vec.dim())
+        s.add_operation(gn.Operation.hrr_bind(key))
+        return s.forward(input_vec)
+
+    if kind is NodeKind.POSITION:
+        # Position-encoded item: bind(item, permute(position_key, pos)).
+        _expect_inputs(node, 2)
+        item = results[node.inputs[0]]
+        position_key = results[node.inputs[1]]
+        pos = int(node.params.get("pos", 0))
+        rotated_key = gn.permute(position_key, pos)
+        return gn.bind(item, rotated_key)
+
+    if kind is NodeKind.ENCODE_SEQUENCE:
+        # bundle(bind(item_i, permute(position_key, i))) for i in inputs.
+        # Inputs are the items; params["position_key_id"] points to a
+        # role-key node ID in `results` (the convention is N + 1 inputs:
+        # last input is the position key).
+        if len(node.inputs) < 2:
+            raise NodeGraphError(
+                f"node {node.node_id} (encode_sequence) needs ≥1 item input "
+                "and 1 position-key input"
+            )
+        position_key = results[node.inputs[-1]]
+        items = [results[i] for i in node.inputs[:-1]]
+        bound = [gn.bind(item, gn.permute(position_key, idx)) for idx, item in enumerate(items)]
+        return gn.bundle(bound)
+
+    if kind is NodeKind.ENCODE_SET:
+        # bundle(items) — order-independent set encoding.
+        _expect_inputs_min(node, 1)
+        return gn.bundle([results[i] for i in node.inputs])
+
+    if kind is NodeKind.ENCODE_PAIR:
+        # Inputs = [key_a, val_a, key_b, val_b]; output = bundle(
+        #   bind(key_a, val_a), bind(key_b, val_b)).
+        if len(node.inputs) != 4:
+            raise NodeGraphError(
+                f"node {node.node_id} (encode_pair) expects exactly 4 inputs "
+                f"(key_a, val_a, key_b, val_b), got {len(node.inputs)}"
+            )
+        ka = results[node.inputs[0]]
+        va = results[node.inputs[1]]
+        kb = results[node.inputs[2]]
+        vb = results[node.inputs[3]]
+        return gn.bundle([gn.bind(ka, va), gn.bind(kb, vb)])
 
     raise NodeGraphError(f"unknown node kind: {kind}")
 
@@ -240,13 +288,8 @@ def _expect_inputs_min(node: HdcNode, n: int) -> None:
 
 
 def available_kinds() -> list[tuple[str, bool]]:
-    """List every NodeKind + whether it has a native impl wired today."""
-    wired = {
-        NodeKind.RANDOM,
-        NodeKind.BIND,
-        NodeKind.UNBIND,
-        NodeKind.BUNDLE,
-        NodeKind.COS_SIM,
-        NodeKind.HAMMING,
-    }
-    return [(k.value, k in wired) for k in NodeKind]
+    """List every NodeKind + whether it has a native impl wired today.
+
+    As of Phase 11 wave 2 closeout, ALL 16 NodeKinds are wired natively.
+    """
+    return [(k.value, True) for k in NodeKind]

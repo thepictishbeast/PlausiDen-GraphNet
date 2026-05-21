@@ -23,8 +23,12 @@ try:
         bundle,
         cos_sim,
         hamming,
+        negate,
+        permute,
         restore,
         snapshot,
+        stack_from_yaml,
+        stack_to_yaml,
         unbind,
     )
     from graphnet._graphnet_native import (
@@ -47,8 +51,12 @@ except ImportError:  # pragma: no cover - exercised when native lib is missing
     bundle = None  # type: ignore[assignment]
     cos_sim = None  # type: ignore[assignment]
     hamming = None  # type: ignore[assignment]
+    permute = None  # type: ignore[assignment]
+    negate = None  # type: ignore[assignment]
     snapshot = None  # type: ignore[assignment]
     restore = None  # type: ignore[assignment]
+    stack_to_yaml = None  # type: ignore[assignment]
+    stack_from_yaml = None  # type: ignore[assignment]
 
 
 def banner() -> str:
@@ -76,7 +84,7 @@ def native_available() -> bool:
 # Phase 11 rolling features: gallery + benchmarks + share are pure-Python
 # and safe to import unconditionally (their entry points raise
 # NotImplementedError when the native extension is needed).
-from graphnet import benchmarks, gallery, maths, nodes, share  # noqa: E402
+from graphnet import advisor, benchmarks, gallery, maths, nodes, share  # noqa: E402
 
 __all__ = [
     "ForwardTrace",
@@ -85,6 +93,7 @@ __all__ = [
     "OperationOutput",
     "Stack",
     "__version__",
+    "advisor",
     "banner",
     "benchmarks",
     "bind",
@@ -94,10 +103,14 @@ __all__ = [
     "hamming",
     "maths",
     "native_available",
+    "negate",
     "nodes",
+    "permute",
     "restore",
     "share",
     "snapshot",
+    "stack_from_yaml",
+    "stack_to_yaml",
     "unbind",
     "version",
 ]

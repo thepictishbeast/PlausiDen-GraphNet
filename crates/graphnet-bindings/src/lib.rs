@@ -20,11 +20,12 @@
 #![allow(clippy::needless_pass_by_value)] // PyO3 idioms
 
 use graphnet_engine::{
-    apply_intervention, snapshot as eng_snapshot, undo as eng_undo, Intervention, Operation, Stack,
+    apply_intervention, snapshot as eng_snapshot, stack_from_yaml as eng_stack_from_yaml,
+    stack_to_yaml as eng_stack_to_yaml, undo as eng_undo, Intervention, Operation, Stack,
 };
 use plausiden_hdc::{
     bind as hdc_bind, bundle as hdc_bundle, cos_sim as hdc_cos_sim, hamming as hdc_hamming,
-    unbind as hdc_unbind, Hypervector,
+    permute as hdc_permute, unbind as hdc_unbind, Hypervector,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -315,6 +316,39 @@ fn hamming(a: PyHypervector, b: PyHypervector) -> PyResult<f64> {
     hdc_hamming(&a.inner, &b.inner).map_err(|e| PyRuntimeError::new_err(e.to_string()))
 }
 
+/// Circular permutation (shift) of a hypervector by `shift` positions.
+#[pyfunction]
+fn permute(v: PyHypervector, shift: usize) -> PyHypervector {
+    PyHypervector {
+        inner: hdc_permute(&v.inner, shift),
+    }
+}
+
+/// Bipolar element-wise negate (multiply every entry by -1).
+#[pyfunction]
+fn negate(v: PyHypervector) -> PyResult<PyHypervector> {
+    let data: Vec<i8> = v.inner.as_slice().iter().map(|x| -x).collect();
+    Hypervector::from_bipolar(data)
+        .map(|inner| PyHypervector { inner })
+        .ok_or_else(|| PyRuntimeError::new_err("negate produced non-bipolar"))
+}
+
+// --- YAML architecture spec ---
+
+/// Serialise a Stack to a YAML architecture spec.
+#[pyfunction]
+fn stack_to_yaml(stack: &PyStack) -> PyResult<String> {
+    eng_stack_to_yaml(&stack.inner).map_err(|e| PyRuntimeError::new_err(e.to_string()))
+}
+
+/// Parse a Stack from a YAML architecture spec.
+#[pyfunction]
+fn stack_from_yaml(yaml: &str) -> PyResult<PyStack> {
+    eng_stack_from_yaml(yaml)
+        .map(|inner| PyStack { inner })
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+}
+
 // --- snapshot / restore ---
 
 /// Snapshot a Stack to bytes.
@@ -342,6 +376,10 @@ fn _graphnet_native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(bundle, m)?)?;
     m.add_function(wrap_pyfunction!(cos_sim, m)?)?;
     m.add_function(wrap_pyfunction!(hamming, m)?)?;
+    m.add_function(wrap_pyfunction!(permute, m)?)?;
+    m.add_function(wrap_pyfunction!(negate, m)?)?;
+    m.add_function(wrap_pyfunction!(stack_to_yaml, m)?)?;
+    m.add_function(wrap_pyfunction!(stack_from_yaml, m)?)?;
     m.add_function(wrap_pyfunction!(snapshot, m)?)?;
     m.add_function(wrap_pyfunction!(restore, m)?)?;
     m.add_class::<PyHypervector>()?;
