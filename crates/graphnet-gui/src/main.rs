@@ -55,6 +55,8 @@ struct App {
     arch_yaw: f32,
     /// Pitch rotation of the 3D arch graph (vertical drag).
     arch_pitch: f32,
+    /// Roll rotation of the 3D arch graph (Shift+drag).
+    arch_roll: f32,
     /// Auto-rotate the 3D arch graph?
     arch_autorotate: bool,
     /// Arch graph zoom factor (1.0 = baseline, 0.5..3.0).
@@ -506,6 +508,7 @@ impl App {
             spawn_time: std::time::Instant::now(),
             arch_yaw: 0.6,
             arch_pitch: 0.15,
+            arch_roll: 0.0,
             arch_autorotate: false,
             arch_zoom: 1.0,
             drag_source: None,
@@ -2950,32 +2953,38 @@ impl eframe::App for App {
                 }
                 let zoom = self.arch_zoom;
                 let autorotate_state = self.arch_autorotate;
+                let mut roll = self.arch_roll;
                 let mut toolbar_action: Option<ArchToolAction> = None;
                 card(ui, |ui| {
-                    let (clicked, new_yaw, new_pitch, action) = architecture_graph_3d(
-                        ui,
-                        &op_tags,
-                        selected,
-                        yaw,
-                        pitch,
-                        zoom,
-                        autorotate_state,
-                        particle_phase,
-                    );
+                    let (clicked, new_yaw, new_pitch, new_roll, action) =
+                        architecture_graph_3d(
+                            ui,
+                            &op_tags,
+                            selected,
+                            yaw,
+                            pitch,
+                            roll,
+                            zoom,
+                            autorotate_state,
+                            particle_phase,
+                        );
                     if let Some(idx) = clicked {
                         graph_click = Some(idx);
                     }
                     yaw = new_yaw;
                     pitch = new_pitch;
+                    roll = new_roll;
                     toolbar_action = action;
                 });
                 self.arch_yaw = yaw;
                 self.arch_pitch = pitch;
+                self.arch_roll = roll;
                 if let Some(action) = toolbar_action {
                     match action {
                         ArchToolAction::Reset => {
                             self.arch_yaw = 0.6;
                             self.arch_pitch = 0.15;
+                            self.arch_roll = 0.0;
                             self.arch_zoom = 1.0;
                             self.set_status("3D view reset".to_string());
                         }
@@ -3747,10 +3756,11 @@ fn architecture_graph_3d(
     selected: Option<usize>,
     yaw_in: f32,
     pitch_in: f32,
+    roll_in: f32,
     zoom: f32,
     autorotate: bool,
     particle_phase: Option<f32>,
-) -> (Option<usize>, f32, f32, Option<ArchToolAction>) {
+) -> (Option<usize>, f32, f32, f32, Option<ArchToolAction>) {
     let n_ops = op_tags.len();
     let height = 360.0_f32;
     let width = ui.available_width();
@@ -3758,13 +3768,20 @@ fn architecture_graph_3d(
         ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click_and_drag());
     let painter = ui.painter_at(rect);
 
-    // Drag: horizontal = yaw, vertical = pitch. Sensitivity bumped 2x.
+    // Drag: horizontal = yaw, vertical = pitch.
+    // Shift+drag horizontal = roll.
     let mut yaw = yaw_in;
     let mut pitch = pitch_in;
+    let mut roll = roll_in;
     if response.dragged() {
-        yaw += response.drag_delta().x * 0.02;
-        pitch += response.drag_delta().y * 0.015;
-        pitch = pitch.clamp(-1.2, 1.2);
+        let mods = ui.input(|i| i.modifiers);
+        if mods.shift {
+            roll += response.drag_delta().x * 0.02;
+        } else {
+            yaw += response.drag_delta().x * 0.02;
+            pitch += response.drag_delta().y * 0.015;
+            pitch = pitch.clamp(-1.2, 1.2);
+        }
     }
 
     // 3D camera: input at x=-1, bundle at x=+0.8, output at x=+1.2.
@@ -3776,18 +3793,24 @@ fn architecture_graph_3d(
     // Perspective project a 3D point (x,y,z) → 2D screen point.
     // Apply yaw (Y axis) then pitch (X axis) then perspective.
     let project = |x: f32, y: f32, z: f32| -> (egui::Pos2, f32) {
+        // 1) Yaw around Y.
         let (sy, cyaw) = yaw.sin_cos();
         let xr = x * cyaw + z * sy;
         let zr1 = -x * sy + z * cyaw;
+        // 2) Pitch around X.
         let (sp, cp) = pitch.sin_cos();
-        let yr = y * cp - zr1 * sp;
+        let yr1 = y * cp - zr1 * sp;
         let zr = y * sp + zr1 * cp;
-        // Camera at z = -3.
+        // 3) Roll around Z (camera Z-axis).
+        let (sr, cr) = roll.sin_cos();
+        let xr2 = xr * cr - yr1 * sr;
+        let yr2 = xr * sr + yr1 * cr;
+        // 4) Perspective.
         let cam_z = -3.0_f32;
         let depth = zr - cam_z;
         let persp = 2.4 / depth.max(0.1);
-        let sx = cx + xr * scale * persp;
-        let sy_screen = cy + yr * scale * persp;
+        let sx = cx + xr2 * scale * persp;
+        let sy_screen = cy + yr2 * scale * persp;
         (egui::pos2(sx, sy_screen), depth)
     };
 
@@ -3984,12 +4007,12 @@ fn architecture_graph_3d(
     painter.text(
         egui::pos2(rect.min.x + 6.0, rect.max.y - 6.0),
         egui::Align2::LEFT_BOTTOM,
-        "drag horizontal = yaw · drag vertical = pitch · click op = select · toolbar top-left",
+        "drag = yaw/pitch · shift+drag = roll · click op = select · toolbar top-left",
         egui::FontId::proportional(theme::SIZE_TINY),
         theme::TEXT_DIM,
     );
 
-    (clicked, yaw, pitch, tool_action)
+    (clicked, yaw, pitch, roll, tool_action)
 }
 
 /// Paint a node with a fake radial gradient (3D-sphere illusion).
