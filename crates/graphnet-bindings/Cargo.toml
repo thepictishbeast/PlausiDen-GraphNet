@@ -1,0 +1,22 @@
+[package]
+name = "graphnet-bindings"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "GraphNet Python bindings (PyO3 0.22)"
+
+[lib]
+name = "graphnet"
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+graphnet-engine = { path = "../graphnet-engine" }
+pyo3 = { version = "0.22", features = ["extension-module", "abi3-py310"] }
+thiserror.workspace = true
+
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"

@@ -1,0 +1,29 @@
+target/
+.DS_Store
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+build/
+dist/
+*.so
+
+# Maturin
+*.whl
+
+# GraphNet runtime
+.graphnet/
+runs/
+sessions/
+benches/target/
+
+# IDE
+.idea/
+.vscode/
