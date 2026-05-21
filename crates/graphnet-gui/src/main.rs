@@ -52,12 +52,17 @@ struct App {
     spawn_time: std::time::Instant,
     /// Yaw rotation of the 3D arch graph, in radians.
     arch_yaw: f32,
+    /// Pitch rotation of the 3D arch graph (vertical drag).
+    arch_pitch: f32,
     /// Auto-rotate the 3D arch graph?
     arch_autorotate: bool,
     /// Op index currently being dragged in the sidebar (for reorder).
     drag_source: Option<usize>,
     /// Time of the most recent forward — animates particle flow on connectors.
     last_forward_at: Option<std::time::Instant>,
+    /// Ring buffer of "action" log lines (timestamp + text), shown in the
+    /// right-hand panel for interaction feedback.
+    action_log: Vec<(std::time::Instant, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -274,9 +279,11 @@ impl App {
             demo: None,
             spawn_time: std::time::Instant::now(),
             arch_yaw: 0.6,
+            arch_pitch: 0.15,
             arch_autorotate: false,
             drag_source: None,
             last_forward_at: None,
+            action_log: Vec::new(),
         };
         app.load_template("standard");
         // Try to restore previous session.
@@ -583,7 +590,12 @@ impl App {
     }
 
     fn set_status(&mut self, msg: String) {
-        self.status_msg = Some((msg, std::time::Instant::now()));
+        self.status_msg = Some((msg.clone(), std::time::Instant::now()));
+        // Also append to the action log (newest at end).
+        self.action_log.push((std::time::Instant::now(), msg));
+        if self.action_log.len() > 64 {
+            self.action_log.remove(0);
+        }
     }
 }
 
@@ -1246,6 +1258,195 @@ impl eframe::App for App {
                 });
         }
 
+        // Right panel: action log + sparklines + per-op inspector.
+        // Pulls the noise out of the central panel + uses previously empty space.
+        egui::SidePanel::right("right")
+            .min_width(320.0)
+            .max_width(420.0)
+            .resizable(true)
+            .frame(
+                egui::Frame::none()
+                    .fill(theme::BG)
+                    .inner_margin(egui::Margin::same(theme::SPACE_LG)),
+            )
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false; 2])
+                    .show(ui, |ui| {
+                        section_heading(ui, "Action log");
+                        ui.add_space(theme::SPACE_SM);
+                        card(ui, |ui| {
+                            if self.action_log.is_empty() {
+                                ui.label(
+                                    egui::RichText::new("(no actions yet — try pressing Space)")
+                                        .color(theme::TEXT_DIM)
+                                        .italics()
+                                        .size(theme::SIZE_SMALL),
+                                );
+                            } else {
+                                let now = std::time::Instant::now();
+                                for (t, msg) in self.action_log.iter().rev().take(10) {
+                                    let age = now.duration_since(*t).as_secs_f32();
+                                    let alpha = (1.0 - (age / 60.0).clamp(0.0, 0.8)).max(0.2);
+                                    let colour = egui::Color32::from_rgba_unmultiplied(
+                                        theme::TEXT_PRIMARY.r(),
+                                        theme::TEXT_PRIMARY.g(),
+                                        theme::TEXT_PRIMARY.b(),
+                                        (alpha * 255.0) as u8,
+                                    );
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            egui::RichText::new(format!("{age:>4.1}s"))
+                                                .size(theme::SIZE_TINY)
+                                                .color(theme::TEXT_MUTED)
+                                                .monospace(),
+                                        );
+                                        ui.label(
+                                            egui::RichText::new(msg)
+                                                .size(theme::SIZE_SMALL)
+                                                .color(colour),
+                                        );
+                                    });
+                                }
+                            }
+                        });
+
+                        if !self.cos_sim_history.is_empty() {
+                            ui.add_space(theme::SPACE_LG);
+                            section_heading(ui, "cos_sim history");
+                            ui.add_space(theme::SPACE_SM);
+                            card(ui, |ui| {
+                                sparkline(ui, self.cos_sim_history.iter().copied(), 70.0);
+                            });
+
+                            ui.add_space(theme::SPACE_MD);
+                            section_heading(ui, "latency history (ms)");
+                            ui.add_space(theme::SPACE_SM);
+                            card(ui, |ui| {
+                                latency_sparkline(
+                                    ui,
+                                    self.latency_history.iter().copied(),
+                                    70.0,
+                                );
+                            });
+                        }
+
+                        // Per-op contribution + inspector — moved from central.
+                        if let Some(trace) = self.last_trace.clone() {
+                            ui.add_space(theme::SPACE_LG);
+                            section_heading(ui, "Per-op contribution");
+                            ui.add_space(theme::SPACE_SM);
+                            let contributions: Vec<(usize, String, f64)> = trace
+                                .per_op
+                                .iter()
+                                .map(|op_out| {
+                                    let s = cos_sim(&op_out.output, &trace.bundled)
+                                        .unwrap_or(0.0);
+                                    (op_out.index, op_out.tag.clone(), s)
+                                })
+                                .collect();
+                            card(ui, |ui| {
+                                contribution_bars(ui, &contributions);
+                            });
+
+                            ui.add_space(theme::SPACE_LG);
+                            section_heading(ui, "Per-op inspector");
+                            ui.add_space(theme::SPACE_SM);
+                            ui.label(
+                                egui::RichText::new("Click a chip below or in the 3D graph:")
+                                    .color(theme::TEXT_MUTED)
+                                    .size(theme::SIZE_SMALL),
+                            );
+                            ui.add_space(theme::SPACE_XS);
+                            let mut selected_change: Option<Option<usize>> = None;
+                            ui.horizontal_wrapped(|ui| {
+                                for op_out in &trace.per_op {
+                                    let active = self.selected_op == Some(op_out.index);
+                                    let accent = theme::op_color(&op_out.tag);
+                                    let btn = ui.add(
+                                        egui::Button::new(
+                                            egui::RichText::new(format!(
+                                                "[{}] {}",
+                                                op_out.index, op_out.tag
+                                            ))
+                                            .size(theme::SIZE_TINY)
+                                            .color(if active {
+                                                egui::Color32::WHITE
+                                            } else {
+                                                accent
+                                            })
+                                            .strong(),
+                                        )
+                                        .fill(if active {
+                                            accent
+                                        } else {
+                                            accent.gamma_multiply(0.18)
+                                        })
+                                        .stroke(egui::Stroke::new(1.0, accent))
+                                        .rounding(egui::Rounding::same(theme::RADIUS_SM)),
+                                    );
+                                    if btn.clicked() {
+                                        selected_change = Some(if active {
+                                            None
+                                        } else {
+                                            Some(op_out.index)
+                                        });
+                                    }
+                                }
+                            });
+                            if let Some(s) = selected_change {
+                                self.selected_op = s;
+                            }
+                            if let Some(idx) = self.selected_op {
+                                if let Some(op_out) = trace.per_op.get(idx) {
+                                    ui.add_space(theme::SPACE_SM);
+                                    let sim_to_input =
+                                        cos_sim(&self.input, &op_out.output).ok();
+                                    let sim_to_out =
+                                        cos_sim(&op_out.output, &trace.bundled).ok();
+                                    let inspector_output = op_out.output.clone();
+                                    let inspector_index = op_out.index;
+                                    let inspector_tag = op_out.tag.clone();
+                                    let mut zoom_here = false;
+                                    card(ui, |ui| {
+                                        metric(
+                                            ui,
+                                            "op",
+                                            &format!("[{inspector_index}] {inspector_tag}"),
+                                        );
+                                        if let Some(s) = sim_to_input {
+                                            metric(
+                                                ui,
+                                                "cos_sim → input",
+                                                &format!("{s:+.3}"),
+                                            );
+                                        }
+                                        if let Some(s) = sim_to_out {
+                                            metric(
+                                                ui,
+                                                "cos_sim → bundled",
+                                                &format!("{s:+.3}"),
+                                            );
+                                        }
+                                        ui.add_space(theme::SPACE_SM);
+                                        if hypervector_heatmap_clickable(
+                                            ui,
+                                            &inspector_output,
+                                            60,
+                                            3.0,
+                                        ) {
+                                            zoom_here = true;
+                                        }
+                                    });
+                                    if zoom_here {
+                                        self.zoom_target = Some(ZoomTarget::PerOp(idx));
+                                    }
+                                }
+                            }
+                        }
+                    });
+            });
+
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::none()
@@ -1357,10 +1558,12 @@ impl eframe::App for App {
                     .map(|op| op.tag().to_string())
                     .collect();
                 if self.arch_autorotate {
-                    self.arch_yaw += 0.005;
+                    self.arch_yaw += 0.008;
+                    self.arch_pitch = 0.2 + (self.arch_yaw * 0.5).sin() * 0.25;
                     ctx.request_repaint();
                 }
                 let mut yaw = self.arch_yaw;
+                let mut pitch = self.arch_pitch;
                 let selected = self.selected_op;
                 let mut graph_click: Option<usize> = None;
                 // Particle phase: rolling 0..1 driven by elapsed time since
@@ -1380,19 +1583,22 @@ impl eframe::App for App {
                     ctx.request_repaint();
                 }
                 card(ui, |ui| {
-                    let (clicked, new_yaw) = architecture_graph_3d(
+                    let (clicked, new_yaw, new_pitch) = architecture_graph_3d(
                         ui,
                         &op_tags,
                         selected,
                         yaw,
+                        pitch,
                         particle_phase,
                     );
                     if let Some(idx) = clicked {
                         graph_click = Some(idx);
                     }
                     yaw = new_yaw;
+                    pitch = new_pitch;
                 });
                 self.arch_yaw = yaw;
+                self.arch_pitch = pitch;
                 if let Some(idx) = graph_click {
                     self.selected_op = if self.selected_op == Some(idx) {
                         None
@@ -1401,26 +1607,7 @@ impl eframe::App for App {
                     };
                 }
 
-                if !self.cos_sim_history.is_empty() {
-                    ui.add_space(theme::SPACE_LG);
-                    ui.horizontal(|ui| {
-                        ui.vertical(|ui| {
-                            section_heading(ui, "cos_sim history");
-                            ui.add_space(theme::SPACE_SM);
-                            card(ui, |ui| {
-                                sparkline(ui, self.cos_sim_history.iter().copied(), 80.0);
-                            });
-                        });
-                        ui.add_space(theme::SPACE_MD);
-                        ui.vertical(|ui| {
-                            section_heading(ui, "latency history (ms)");
-                            ui.add_space(theme::SPACE_SM);
-                            card(ui, |ui| {
-                                latency_sparkline(ui, self.latency_history.iter().copied(), 80.0);
-                            });
-                        });
-                    });
-                }
+                // (cos_sim / latency sparklines moved to the right panel.)
 
                 ui.add_space(theme::SPACE_LG);
                 let mut zoom_request: Option<ZoomTarget> = None;
@@ -1466,91 +1653,7 @@ impl eframe::App for App {
                         }
                     });
 
-                    // Per-op contribution bars (visual story: how much
-                    // does each op influence the bundled output?).
-                    if let Some(trace) = self.last_trace.clone() {
-                        ui.add_space(theme::SPACE_LG);
-                        section_heading(ui, "Per-op contribution");
-                        ui.add_space(theme::SPACE_SM);
-                        let contributions: Vec<(usize, String, f64)> = trace
-                            .per_op
-                            .iter()
-                            .map(|op_out| {
-                                let s = cos_sim(&op_out.output, &trace.bundled)
-                                    .unwrap_or(0.0);
-                                (op_out.index, op_out.tag.clone(), s)
-                            })
-                            .collect();
-                        card(ui, |ui| {
-                            contribution_bars(ui, &contributions);
-                        });
-
-                        ui.add_space(theme::SPACE_LG);
-                        section_heading(ui, "Per-op inspector");
-                        ui.add_space(theme::SPACE_SM);
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new("View:")
-                                    .color(theme::TEXT_MUTED)
-                                    .size(theme::SIZE_SMALL),
-                            );
-                            for op_out in &trace.per_op {
-                                let active = self.selected_op == Some(op_out.index);
-                                let accent = theme::op_color(&op_out.tag);
-                                let btn = ui.add(
-                                    egui::Button::new(
-                                        egui::RichText::new(format!(
-                                            "[{}] {}",
-                                            op_out.index, op_out.tag
-                                        ))
-                                        .size(theme::SIZE_SMALL)
-                                        .color(if active {
-                                            egui::Color32::WHITE
-                                        } else {
-                                            accent
-                                        })
-                                        .strong(),
-                                    )
-                                    .fill(if active {
-                                        accent
-                                    } else {
-                                        accent.gamma_multiply(0.18)
-                                    })
-                                    .stroke(egui::Stroke::new(1.0, accent))
-                                    .rounding(egui::Rounding::same(theme::RADIUS_SM)),
-                                );
-                                if btn.clicked() {
-                                    self.selected_op = if active {
-                                        None
-                                    } else {
-                                        Some(op_out.index)
-                                    };
-                                }
-                            }
-                        });
-                        if let Some(idx) = self.selected_op {
-                            if let Some(op_out) = trace.per_op.get(idx) {
-                                ui.add_space(theme::SPACE_SM);
-                                let sim_to_input = cos_sim(&self.input, &op_out.output).ok();
-                                let sim_to_out = cos_sim(&op_out.output, &trace.bundled).ok();
-                                card(ui, |ui| {
-                                    metric(ui, "op", &format!("[{}] {}", op_out.index, op_out.tag));
-                                    if let Some(s) = sim_to_input {
-                                        metric(ui, "cos_sim → input", &format!("{s:+.3}"));
-                                    }
-                                    if let Some(s) = sim_to_out {
-                                        metric(ui, "cos_sim → bundled", &format!("{s:+.3}"));
-                                    }
-                                    ui.add_space(theme::SPACE_SM);
-                                    if hypervector_heatmap_clickable(
-                                        ui, &op_out.output, 80, 4.0,
-                                    ) {
-                                        zoom_request = Some(ZoomTarget::PerOp(idx));
-                                    }
-                                });
-                            }
-                        }
-                    }
+                    // (Per-op contribution + inspector moved to the right panel.)
                 } else {
                     ui.label(
                         egui::RichText::new("(click ‘Run forward’ or press Space)")
@@ -2032,19 +2135,23 @@ fn architecture_graph_3d(
     op_tags: &[String],
     selected: Option<usize>,
     yaw_in: f32,
+    pitch_in: f32,
     particle_phase: Option<f32>,
-) -> (Option<usize>, f32) {
+) -> (Option<usize>, f32, f32) {
     let n_ops = op_tags.len();
-    let height = 280.0_f32;
-    let width = ui.available_width().min(720.0);
+    let height = 360.0_f32;
+    let width = ui.available_width();
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click_and_drag());
     let painter = ui.painter_at(rect);
 
-    // Drag rotates yaw.
+    // Drag: horizontal = yaw, vertical = pitch. Sensitivity bumped 2x.
     let mut yaw = yaw_in;
+    let mut pitch = pitch_in;
     if response.dragged() {
-        yaw += response.drag_delta().x * 0.01;
+        yaw += response.drag_delta().x * 0.02;
+        pitch += response.drag_delta().y * 0.015;
+        pitch = pitch.clamp(-1.2, 1.2);
     }
 
     // 3D camera: input at x=-1, bundle at x=+0.8, output at x=+1.2.
@@ -2054,17 +2161,20 @@ fn architecture_graph_3d(
     let scale = (rect.width().min(rect.height()) * 0.32).min(180.0);
 
     // Perspective project a 3D point (x,y,z) → 2D screen point.
-    // Apply yaw rotation around the Y axis first, then perspective.
+    // Apply yaw (Y axis) then pitch (X axis) then perspective.
     let project = |x: f32, y: f32, z: f32| -> (egui::Pos2, f32) {
         let (sy, cyaw) = yaw.sin_cos();
         let xr = x * cyaw + z * sy;
-        let zr = -x * sy + z * cyaw;
+        let zr1 = -x * sy + z * cyaw;
+        let (sp, cp) = pitch.sin_cos();
+        let yr = y * cp - zr1 * sp;
+        let zr = y * sp + zr1 * cp;
         // Camera at z = -3.
         let cam_z = -3.0_f32;
         let depth = zr - cam_z;
         let persp = 2.4 / depth.max(0.1);
         let sx = cx + xr * scale * persp;
-        let sy_screen = cy + y * scale * persp;
+        let sy_screen = cy + yr * scale * persp;
         (egui::pos2(sx, sy_screen), depth)
     };
 
@@ -2212,12 +2322,12 @@ fn architecture_graph_3d(
     painter.text(
         egui::pos2(rect.min.x + 6.0, rect.max.y - 6.0),
         egui::Align2::LEFT_BOTTOM,
-        "drag to rotate · click an op to select",
+        "drag horizontal = yaw · drag vertical = pitch · click op = select",
         egui::FontId::proportional(theme::SIZE_TINY),
         theme::TEXT_DIM,
     );
 
-    (clicked, yaw)
+    (clicked, yaw, pitch)
 }
 
 /// Paint a node with a fake radial gradient (3D-sphere illusion).
