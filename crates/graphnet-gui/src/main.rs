@@ -78,6 +78,11 @@ struct App {
     resource_monitor: ResourceMonitor,
     last_sample: Option<ResourceSample>,
     last_sample_at: std::time::Instant,
+    /// Unlocked achievements (slug → Instant of unlock).
+    achievements: std::collections::HashMap<&'static str, std::time::Instant>,
+    /// Tracking sets for achievement criteria.
+    op_kinds_seen: std::collections::HashSet<String>,
+    templates_seen: std::collections::HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -374,6 +379,9 @@ impl App {
             resource_monitor: ResourceMonitor::new(),
             last_sample: None,
             last_sample_at: std::time::Instant::now(),
+            achievements: std::collections::HashMap::new(),
+            op_kinds_seen: std::collections::HashSet::new(),
+            templates_seen: std::collections::HashSet::new(),
         };
         app.load_template("standard");
         // Try to restore previous session.
@@ -604,6 +612,8 @@ impl App {
             self.last_trace = Some(trace);
             self.last_latency_ms = Some(ms);
             self.forwards = self.forwards.saturating_add(1);
+            self.last_forward_at = Some(std::time::Instant::now());
+            self.check_achievements();
         }
     }
 
@@ -702,6 +712,79 @@ impl App {
 
     fn set_status(&mut self, msg: String) {
         self.log(LogSeverity::Info, msg);
+    }
+
+    fn unlock(&mut self, slug: &'static str, label: &str, icon: &str) {
+        if self.achievements.contains_key(slug) {
+            return;
+        }
+        self.achievements.insert(slug, std::time::Instant::now());
+        // Celebrate with a success-level log entry.
+        let msg = format!("🏆 Achievement unlocked: {icon} {label}");
+        // Recursion-safe: write directly to action_log without calling
+        // self.log (we set the status from here too).
+        self.status_msg = Some((msg.clone(), std::time::Instant::now()));
+        self.action_log.push(LogEntry {
+            at: std::time::Instant::now(),
+            severity: LogSeverity::Success,
+            msg,
+        });
+        if self.action_log.len() > 128 {
+            self.action_log.remove(0);
+        }
+    }
+
+    /// Check criteria after a forward / mutation and unlock anything new.
+    fn check_achievements(&mut self) {
+        // Record state into tracking sets.
+        for op in self.stack.operations() {
+            self.op_kinds_seen.insert(op.tag().to_string());
+        }
+        self.templates_seen.insert(self.template.to_string());
+
+        if self.forwards >= 1 {
+            self.unlock("first_forward", "First Forward", "🚀");
+        }
+        if self.forwards >= 10 {
+            self.unlock("ten_forwards", "Warming Up", "🔥");
+        }
+        if self.forwards >= 100 {
+            self.unlock("hundred_forwards", "Iteration Champion", "💯");
+        }
+        if self.forwards >= 1000 {
+            self.unlock("thousand_forwards", "Live & Loving It", "⚡");
+        }
+        if self.op_kinds_seen.len() >= 5 {
+            self.unlock("all_op_kinds", "Generalist", "🎭");
+        }
+        if self.templates_seen.len() >= TEMPLATES.len() {
+            self.unlock("all_templates", "Template Connoisseur", "📚");
+        }
+        if self.stack.len() >= 10 {
+            self.unlock("ten_op_stack", "Tower Builder", "🏗");
+        }
+        if self.dim >= 16_000 {
+            self.unlock("high_dim", "Hyperdimensional", "🌌");
+        }
+        if self.dim <= 256 {
+            self.unlock("low_dim", "Minimalist", "🌱");
+        }
+        if self.demo.is_some() {
+            self.unlock("demo_runner", "Demo Watcher", "🎬");
+        }
+        if self.undo_stack.len() >= 5 {
+            self.unlock("undoer", "Revisionist", "↶");
+        }
+        if !self.cos_sim_history.is_empty() {
+            let max_sim = self
+                .cos_sim_history
+                .iter()
+                .copied()
+                .fold(f64::NEG_INFINITY, f64::max);
+            if max_sim > 0.85 {
+                self.unlock("high_sim", "Echo Chamber", "🪞");
+            }
+        }
     }
 
     fn log(&mut self, severity: LogSeverity, msg: String) {
@@ -1557,6 +1640,62 @@ impl eframe::App for App {
                                     egui::RichText::new(action)
                                         .color(theme::TEXT_PRIMARY)
                                         .size(theme::SIZE_SMALL),
+                                );
+                                ui.end_row();
+                            }
+                        });
+
+                    ui.add_space(theme::SPACE_LG);
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Achievements ({}/{})",
+                            self.achievements.len(),
+                            11
+                        ))
+                        .size(theme::SIZE_H2)
+                        .color(theme::ACCENT_BLUE)
+                        .strong(),
+                    );
+                    ui.add_space(theme::SPACE_SM);
+                    let all_badges: &[(&str, &str, &str)] = &[
+                        ("first_forward", "🚀", "First Forward — run any forward"),
+                        ("ten_forwards", "🔥", "Warming Up — 10 forwards"),
+                        ("hundred_forwards", "💯", "Iteration Champion — 100 forwards"),
+                        ("thousand_forwards", "⚡", "Live & Loving It — 1000 forwards"),
+                        ("all_op_kinds", "🎭", "Generalist — use all 5 op kinds"),
+                        ("all_templates", "📚", "Template Connoisseur — load every template"),
+                        ("ten_op_stack", "🏗", "Tower Builder — 10+ ops in one stack"),
+                        ("high_dim", "🌌", "Hyperdimensional — D ≥ 16,000"),
+                        ("low_dim", "🌱", "Minimalist — D ≤ 256"),
+                        ("demo_runner", "🎬", "Demo Watcher — run the auto-demo"),
+                        ("undoer", "↶", "Revisionist — 5+ undo operations"),
+                        ("high_sim", "🪞", "Echo Chamber — cos_sim > 0.85"),
+                    ];
+                    egui::Grid::new("achievements_grid")
+                        .num_columns(2)
+                        .spacing([theme::SPACE_MD, theme::SPACE_XS])
+                        .show(ui, |ui| {
+                            for (slug, icon, description) in all_badges {
+                                let unlocked = self.achievements.contains_key(slug);
+                                let icon_col = if unlocked {
+                                    egui::Color32::from_rgb(0xE0, 0xB1, 0x5B)
+                                } else {
+                                    theme::TEXT_DIM
+                                };
+                                let text_col = if unlocked {
+                                    theme::TEXT_PRIMARY
+                                } else {
+                                    theme::TEXT_DIM
+                                };
+                                ui.label(
+                                    egui::RichText::new(*icon)
+                                        .size(theme::SIZE_H2)
+                                        .color(icon_col),
+                                );
+                                ui.label(
+                                    egui::RichText::new(*description)
+                                        .size(theme::SIZE_SMALL)
+                                        .color(text_col),
                                 );
                                 ui.end_row();
                             }
