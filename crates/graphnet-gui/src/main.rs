@@ -87,6 +87,72 @@ struct App {
     current_objective: usize,
     /// Whether each objective is completed (parallel to OBJECTIVES).
     objective_done: Vec<bool>,
+    /// Colormap for hypervector heatmaps (#710).
+    colormap: Colormap,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Colormap {
+    /// Default: blue (positive) / purple-dim (negative). Pure bipolar.
+    Bipolar,
+    /// Viridis-style: dark purple → teal → yellow.
+    Viridis,
+    /// Plasma-style: dark purple → magenta → orange → yellow.
+    Plasma,
+    /// Monochrome: black (negative) → white (positive).
+    Mono,
+}
+
+impl Colormap {
+    fn all() -> &'static [Colormap] {
+        &[
+            Colormap::Bipolar,
+            Colormap::Viridis,
+            Colormap::Plasma,
+            Colormap::Mono,
+        ]
+    }
+    fn label(self) -> &'static str {
+        match self {
+            Colormap::Bipolar => "bipolar",
+            Colormap::Viridis => "viridis",
+            Colormap::Plasma => "plasma",
+            Colormap::Mono => "mono",
+        }
+    }
+    /// Map a bipolar value (-1 or +1) to a colour for this colormap.
+    fn map(self, v: i8) -> egui::Color32 {
+        match self {
+            Colormap::Bipolar => {
+                if v > 0 {
+                    theme::ACCENT_BLUE
+                } else {
+                    theme::ACCENT_PURPLE.gamma_multiply(0.55)
+                }
+            }
+            Colormap::Viridis => {
+                if v > 0 {
+                    egui::Color32::from_rgb(0xFD, 0xE7, 0x25) // yellow
+                } else {
+                    egui::Color32::from_rgb(0x44, 0x01, 0x54) // dark purple
+                }
+            }
+            Colormap::Plasma => {
+                if v > 0 {
+                    egui::Color32::from_rgb(0xF0, 0xF9, 0x21) // pale yellow
+                } else {
+                    egui::Color32::from_rgb(0x0D, 0x08, 0x87) // deep blue-violet
+                }
+            }
+            Colormap::Mono => {
+                if v > 0 {
+                    egui::Color32::WHITE
+                } else {
+                    egui::Color32::from_rgb(0x14, 0x18, 0x22)
+                }
+            }
+        }
+    }
 }
 
 /// One challenge in the objectives catalog (#720).
@@ -449,6 +515,7 @@ impl App {
             templates_seen: std::collections::HashSet::new(),
             current_objective: 0,
             objective_done: vec![false; OBJECTIVES.len()],
+            colormap: Colormap::Bipolar,
         };
         app.load_template("standard");
         // Try to restore previous session.
@@ -1435,6 +1502,40 @@ impl eframe::App for App {
                         });
                         ui.checkbox(&mut self.arch_autorotate, "arch graph auto-rotate");
                         ui.checkbox(&mut self.live, "live continuous mode");
+                        ui.add_space(theme::SPACE_SM);
+                        ui.label(
+                            egui::RichText::new("heatmap colormap")
+                                .color(theme::TEXT_MUTED)
+                                .size(theme::SIZE_SMALL),
+                        );
+                        ui.horizontal_wrapped(|ui| {
+                            for &cmap in Colormap::all() {
+                                let active = self.colormap == cmap;
+                                let resp = ui.add(
+                                    egui::Button::new(
+                                        egui::RichText::new(cmap.label())
+                                            .size(theme::SIZE_SMALL)
+                                            .color(if active {
+                                                egui::Color32::WHITE
+                                            } else {
+                                                theme::TEXT_PRIMARY
+                                            })
+                                            .strong(),
+                                    )
+                                    .fill(if active {
+                                        theme::ACCENT_MID
+                                    } else {
+                                        theme::BG_CARD_HOVER
+                                    })
+                                    .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
+                                    .rounding(egui::Rounding::same(theme::RADIUS_SM)),
+                                );
+                                if resp.clicked() {
+                                    self.colormap = cmap;
+                                    self.set_status(format!("colormap → {}", cmap.label()));
+                                }
+                            }
+                        });
                     });
                     ui.add_space(theme::SPACE_MD);
                     section_heading(ui, "Dim");
@@ -2220,7 +2321,7 @@ impl eframe::App for App {
                             }
                         });
                         ui.add_space(theme::SPACE_SM);
-                        if hypervector_heatmap_clickable(ui, &input_clone, 100, 2.0) {
+                        if hypervector_heatmap_clickable_cmap(ui, &input_clone, 100, 2.0, self.colormap) {
                             zoom_request_local = Some(ZoomTarget::Input);
                         }
                     });
@@ -2245,7 +2346,7 @@ impl eframe::App for App {
                                 }
                             });
                             ui.add_space(theme::SPACE_SM);
-                            if hypervector_heatmap_clickable(ui, &out, 100, 2.0) {
+                            if hypervector_heatmap_clickable_cmap(ui, &out, 100, 2.0, self.colormap) {
                                 zoom_request_local = Some(ZoomTarget::Output);
                             }
                         });
@@ -2459,7 +2560,7 @@ impl eframe::App for App {
                             cosine_similarity_bar(ui, s);
                         }
                         ui.add_space(theme::SPACE_SM);
-                        if hypervector_heatmap_clickable(ui, &out, 100, 2.0) {
+                        if hypervector_heatmap_clickable_cmap(ui, &out, 100, 2.0, self.colormap) {
                             zoom_request = Some(ZoomTarget::Output);
                         }
                     });
@@ -2900,6 +3001,51 @@ fn contribution_bars(ui: &mut egui::Ui, entries: &[(usize, String, f64)]) {
     }
 }
 
+/// Clickable + colormap variant.
+fn hypervector_heatmap_clickable_cmap(
+    ui: &mut egui::Ui,
+    v: &Hypervector,
+    cols: usize,
+    cell: f32,
+    cmap: Colormap,
+) -> bool {
+    let dim = v.dim();
+    let rows = dim.div_ceil(cols);
+    let total_w = cols as f32 * cell;
+    let total_h = rows as f32 * cell;
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(total_w, total_h), egui::Sense::click());
+    let painter = ui.painter_at(rect);
+    let data = v.as_slice();
+    for i in 0..dim {
+        let r = i / cols;
+        let c = i % cols;
+        let x = rect.min.x + c as f32 * cell;
+        let y = rect.min.y + r as f32 * cell;
+        let colour = cmap.map(data[i]);
+        painter.rect_filled(
+            egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(cell - 1.0, cell - 1.0)),
+            0.0,
+            colour,
+        );
+    }
+    if let Some(pos) = response.hover_pos() {
+        let local = pos - rect.min;
+        let c = (local.x / cell).floor() as i64;
+        let r = (local.y / cell).floor() as i64;
+        if c >= 0 && r >= 0 && (c as usize) < cols && (r as usize) < rows {
+            let idx = (r as usize) * cols + (c as usize);
+            if idx < dim {
+                response.clone().on_hover_text_at_pointer(format!(
+                    "index {idx}  →  {:+}  ·  click to zoom",
+                    data[idx]
+                ));
+            }
+        }
+    }
+    response.clicked()
+}
+
 /// Clickable variant: returns true if the user clicked the heatmap (to
 /// request zoom). Otherwise mirrors `hypervector_heatmap`.
 fn hypervector_heatmap_clickable(
@@ -2953,6 +3099,16 @@ fn hypervector_heatmap_clickable(
 }
 
 fn hypervector_heatmap(ui: &mut egui::Ui, v: &Hypervector, cols: usize, cell: f32) {
+    hypervector_heatmap_with_cmap(ui, v, cols, cell, Colormap::Bipolar);
+}
+
+fn hypervector_heatmap_with_cmap(
+    ui: &mut egui::Ui,
+    v: &Hypervector,
+    cols: usize,
+    cell: f32,
+    cmap: Colormap,
+) {
     let dim = v.dim();
     let rows = dim.div_ceil(cols);
     let total_w = cols as f32 * cell;
@@ -2966,11 +3122,7 @@ fn hypervector_heatmap(ui: &mut egui::Ui, v: &Hypervector, cols: usize, cell: f3
         let c = i % cols;
         let x = rect.min.x + c as f32 * cell;
         let y = rect.min.y + r as f32 * cell;
-        let colour = if data[i] > 0 {
-            theme::ACCENT_BLUE
-        } else {
-            theme::ACCENT_PURPLE.gamma_multiply(0.55)
-        };
+        let colour = cmap.map(data[i]);
         painter.rect_filled(
             egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(cell - 1.0, cell - 1.0)),
             0.0,
