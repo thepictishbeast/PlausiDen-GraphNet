@@ -16,6 +16,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod continuous;
 pub mod intervene;
 pub mod model;
 pub mod op;
@@ -23,6 +24,7 @@ pub mod snapshot;
 pub mod stack;
 pub mod trace;
 
+pub use continuous::{ContinuousError, ContinuousRunner, ForwardEvent};
 pub use intervene::{apply_intervention, undo, Intervention, InterventionError, UndoToken};
 pub use model::{ArchSummary, ExternalModel, Model, ModelError};
 pub use op::{Operation, OperationError};
@@ -60,6 +62,10 @@ pub enum Error {
     /// Snapshot / restore error.
     #[error("snapshot: {0}")]
     Snapshot(#[from] SnapshotError),
+
+    /// Continuous-mode runner error.
+    #[error("continuous: {0}")]
+    Continuous(#[from] ContinuousError),
 
     /// Underlying I/O failure (snapshot/restore, log read).
     #[error("io: {0}")]
