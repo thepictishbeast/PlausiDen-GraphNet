@@ -9,6 +9,7 @@ authors.workspace = true
 description = "GraphNet core engine — Model trait, Stack execution, intervention API, resource monitoring, session recording"
 
 [dependencies]
+plausiden-hdc = { git = "https://github.com/thepictishbeast/PlausiDen-Stack", rev = "d2207b2085c0815950e3411365c0c7ecf80e5636" }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true

@@ -1,30 +1,49 @@
 //! GraphNet core engine.
 //!
-//! BUG ASSUMPTION: this crate is a v0 skeleton. The public surface is reserved
-//! but unimplemented; calling any API will return `Error::NotImplemented`
-//! until the corresponding Phase task lands (`GRAPHNET_BUILD_PLAN.md` §7).
+//! Phase 1 lands here: `Model` trait + `Stack` execution + intervention API
+//! foundation, depending on `plausiden-hdc` for the HDC substrate primitives.
 //!
-//! Architectural plan: `crates/graphnet-engine/src/` will grow these modules:
+//! BUG ASSUMPTION: the public surface in Phase 1 is intentionally narrow —
+//! `Stack` supports three operations (`Dense`, `HrrBind`, `Identity`); more
+//! land in subsequent phases (`GatedRoute` Phase 2, multi-arch adapters
+//! Phase 5, intervention API Phase 7).
 //!
-//! - `model` — `Model` trait, snapshot/restore, subscribe channels
-//! - `stack` — Stack + StackOfStacks implementations
-//! - `intervene` — typed Intervention API (weight edits, op add/remove)
-//! - `monitor` — RAM/CPU/GPU/FLOPs/wall-time/energy sampling
-//! - `record` — session recording, replay, log-driven reconstruction
-//! - `adapters` — Adapter trait + per-family adapter wrappers
+//! Module layout:
 //!
-//! See `docs/PLAN.md` (project root) for the full design.
+//! - `op` — `Operation` enum + per-op execution
+//! - `stack` — `Stack` struct + `forward()` execution
+//! - `model` — `Model` trait (`Stack` is one impl; transformer/Mamba in Phase 5)
 
 #![forbid(unsafe_code)]
 
+pub mod model;
+pub mod op;
+pub mod stack;
+
+pub use model::{ArchSummary, ExternalModel, Model, ModelError};
+pub use op::{Operation, OperationError};
+pub use stack::{Stack, StackError};
+
 use thiserror::Error;
 
-/// Top-level engine error.
+/// Top-level engine error wrapping per-subsystem errors.
 #[derive(Debug, Error)]
 pub enum Error {
-    /// The requested operation is not yet implemented (Phase still pending).
-    #[error("not implemented yet: {0}")]
-    NotImplemented(&'static str),
+    /// HDC primitive error (dim mismatch, empty bundle).
+    #[error("hdc: {0}")]
+    Hdc(#[from] plausiden_hdc::HdcError),
+
+    /// Stack execution error.
+    #[error("stack: {0}")]
+    Stack(#[from] StackError),
+
+    /// Model adapter error.
+    #[error("model: {0}")]
+    Model(#[from] ModelError),
+
+    /// Operation error.
+    #[error("op: {0}")]
+    Op(#[from] OperationError),
 
     /// Underlying I/O failure (snapshot/restore, log read).
     #[error("io: {0}")]
@@ -38,15 +57,12 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Returns a banner describing the engine state.
-///
-/// BUG ASSUMPTION: returns a static string today; once Phase 1 lands this will
-/// include compile-time feature flags + backend list.
 #[must_use]
 pub fn banner() -> &'static str {
     concat!(
         "graphnet-engine v",
         env!("CARGO_PKG_VERSION"),
-        " (Phase 0 scaffold — APIs reserved, not implemented)"
+        " (Phase 1 — Model + Stack + 3 ops; intervention API + snapshot in Phase 7+ / 9)"
     )
 }
 
@@ -56,20 +72,11 @@ mod tests {
 
     #[test]
     fn banner_mentions_version() {
-        let b = banner();
-        assert!(b.contains(env!("CARGO_PKG_VERSION")));
+        assert!(banner().contains(env!("CARGO_PKG_VERSION")));
     }
 
     #[test]
     fn version_constant_matches_cargo() {
         assert_eq!(VERSION, env!("CARGO_PKG_VERSION"));
-    }
-
-    #[test]
-    fn error_not_implemented_displays() {
-        let e = Error::NotImplemented("model.forward");
-        let msg = format!("{e}");
-        assert!(msg.contains("not implemented"));
-        assert!(msg.contains("model.forward"));
     }
 }
