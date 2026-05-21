@@ -26,6 +26,8 @@ blake3.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 sysinfo.workspace = true
+bytemuck = "1"
+similar = { workspace = true }
 
 [dev-dependencies]
 proptest.workspace = true

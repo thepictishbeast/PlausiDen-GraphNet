@@ -25,6 +25,7 @@ pub mod op;
 pub mod snapshot;
 pub mod stack;
 pub mod trace;
+pub mod yaml_spec;
 
 pub use continuous::{ContinuousError, ContinuousRunner, ForwardEvent};
 pub use history::{HistoryError, InterventionHistory, DEFAULT_HISTORY_CAPACITY};
@@ -37,6 +38,9 @@ pub use snapshot::{
 };
 pub use stack::{Stack, StackError};
 pub use trace::{ForwardTrace, OperationOutput};
+pub use yaml_spec::{
+    stack_from_yaml, stack_to_yaml, ArchitectureSpec, OperationSpec, SpecError, SPEC_VERSION,
+};
 
 use thiserror::Error;
 
@@ -74,6 +78,10 @@ pub enum Error {
     /// History (undo/redo) error.
     #[error("history: {0}")]
     History(#[from] HistoryError),
+
+    /// YAML spec export/import error.
+    #[error("yaml: {0}")]
+    Yaml(#[from] SpecError),
 
     /// Underlying I/O failure (snapshot/restore, log read).
     #[error("io: {0}")]
