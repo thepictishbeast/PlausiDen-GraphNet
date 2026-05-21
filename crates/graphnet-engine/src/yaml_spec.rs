@@ -110,6 +110,11 @@ impl ArchitectureSpec {
                         .or_insert_with(|| key.as_slice().to_vec());
                     ("hrr_bind".to_string(), Some(id))
                 }
+                Operation::Permute { shift } => {
+                    // Use the shift value itself as the "key" identifier.
+                    (format!("permute:{shift}"), None)
+                }
+                Operation::Negate => ("negate".to_string(), None),
             };
             ops.push(OperationSpec { kind, key_id });
         }
@@ -174,6 +179,18 @@ impl ArchitectureSpec {
         for (index, op_spec) in self.ops.iter().enumerate() {
             let op = match op_spec.kind.as_str() {
                 "identity" => Operation::Identity,
+                "negate" => Operation::Negate,
+                s if s.starts_with("permute:") => {
+                    let shift: usize = s
+                        .strip_prefix("permute:")
+                        .and_then(|n| n.parse().ok())
+                        .ok_or_else(|| {
+                            SpecError::Invalid(format!(
+                                "permute op at index {index} has bad shift literal"
+                            ))
+                        })?;
+                    Operation::Permute { shift }
+                }
                 "dense" | "hrr_bind" => {
                     let id = op_spec
                         .key_id

@@ -13,7 +13,7 @@
 //! Phase 2 adds `GatedRoute`; Phase 3 adds `Aggregate` for stack-of-stacks
 //! aggregation across substructures.
 
-use plausiden_hdc::{bind, Hypervector};
+use plausiden_hdc::{bind, permute as hdc_permute, Hypervector};
 use rustfft::num_complex::Complex;
 use rustfft::FftPlanner;
 use serde::{Deserialize, Serialize};
@@ -54,6 +54,17 @@ pub enum Operation {
         /// The key hypervector that input is convolved with.
         key: Hypervector,
     },
+
+    /// Circular permutation (rotation): shifts the hypervector by `shift`
+    /// positions. Useful for positional encoding in HDC.
+    Permute {
+        /// Number of positions to rotate by.
+        shift: usize,
+    },
+
+    /// Elementwise negate: every bipolar component flips sign.
+    /// Self-inverse.
+    Negate,
 }
 
 impl Operation {
@@ -66,6 +77,16 @@ impl Operation {
             Operation::Identity => Ok(input.clone()),
             Operation::Dense { key } => Ok(bind(input, key)?),
             Operation::HrrBind { key } => hrr_bind(input, key),
+            Operation::Permute { shift } => Ok(hdc_permute(input, *shift)),
+            Operation::Negate => {
+                let data: Vec<i8> = input.as_slice().iter().map(|x| -x).collect();
+                Hypervector::from_bipolar(data).ok_or(OperationError::Hdc(
+                    plausiden_hdc::HdcError::DimMismatch {
+                        a: input.dim(),
+                        b: input.dim(),
+                    },
+                ))
+            }
         }
     }
 
@@ -76,6 +97,8 @@ impl Operation {
             Operation::Identity => "identity",
             Operation::Dense { .. } => "dense",
             Operation::HrrBind { .. } => "hrr_bind",
+            Operation::Permute { .. } => "permute",
+            Operation::Negate => "negate",
         }
     }
 }
@@ -194,5 +217,33 @@ mod tests {
         assert_eq!(Operation::Identity.tag(), "identity");
         assert_eq!(Operation::Dense { key: hv(1) }.tag(), "dense");
         assert_eq!(Operation::HrrBind { key: hv(1) }.tag(), "hrr_bind");
+        assert_eq!(Operation::Permute { shift: 3 }.tag(), "permute");
+        assert_eq!(Operation::Negate.tag(), "negate");
+    }
+
+    #[test]
+    fn permute_shifts_then_unshifts() {
+        let v = hv(1);
+        let op = Operation::Permute { shift: 17 };
+        let out = op.apply(&v).expect("ok");
+        // Permuted vector should not equal input (very small probability of collision).
+        assert_ne!(out, v);
+        // Permuting by dim is identity.
+        let dim = v.dim();
+        let id_op = Operation::Permute { shift: dim };
+        let out_id = id_op.apply(&v).expect("ok");
+        assert_eq!(out_id, v);
+    }
+
+    #[test]
+    fn negate_is_self_inverse() {
+        let v = hv(1);
+        let op = Operation::Negate;
+        let once = op.apply(&v).expect("ok");
+        let twice = op.apply(&once).expect("ok");
+        assert_eq!(twice, v);
+        // Cosine similarity of v and -v is exactly -1.
+        let sim = cos_sim(&v, &once).expect("ok");
+        assert!((sim + 1.0).abs() < 1e-9, "negate cos_sim = {sim}, expected -1");
     }
 }

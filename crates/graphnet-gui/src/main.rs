@@ -395,6 +395,10 @@ impl App {
             "hrr_bind" => Operation::HrrBind {
                 key: Hypervector::random_seeded(self.dim, seed + 100),
             },
+            "permute" => Operation::Permute {
+                shift: (self.stack.len() * 7 + 13) % self.dim.max(1),
+            },
+            "negate" => Operation::Negate,
             _ => return,
         };
         self.stack.add_operation(op);
@@ -406,8 +410,7 @@ impl App {
         }
     }
 
-    /// Replace the key on a Dense/HrrBind op without removing it. No-op
-    /// on Identity (no key to rotate).
+    /// Replace the key on a Dense/HrrBind op, or rotate Permute shift.
     fn reseed_op(&mut self, idx: usize) {
         if idx >= self.stack.len() {
             return;
@@ -421,6 +424,9 @@ impl App {
             },
             "hrr_bind" => Operation::HrrBind {
                 key: Hypervector::random_seeded(self.dim, new_seed),
+            },
+            "permute" => Operation::Permute {
+                shift: ((new_seed as usize).wrapping_mul(13)) % self.dim.max(1),
             },
             _ => return,
         };
@@ -924,14 +930,23 @@ impl eframe::App for App {
 
                 ui.add_space(theme::SPACE_SM);
                 ui.horizontal(|ui| {
-                    if mini_button(ui, "+ Identity", theme::op_color("identity")).clicked() {
+                    if mini_button(ui, "+ Id", theme::op_color("identity")).clicked() {
                         self.add_op("identity");
                     }
                     if mini_button(ui, "+ Dense", theme::op_color("dense")).clicked() {
                         self.add_op("dense");
                     }
-                    if mini_button(ui, "+ HrrBind", theme::op_color("hrr_bind")).clicked() {
+                    if mini_button(ui, "+ Hrr", theme::op_color("hrr_bind")).clicked() {
                         self.add_op("hrr_bind");
+                    }
+                });
+                ui.add_space(theme::SPACE_XS);
+                ui.horizontal(|ui| {
+                    if mini_button(ui, "+ Permute", theme::op_color("permute")).clicked() {
+                        self.add_op("permute");
+                    }
+                    if mini_button(ui, "+ Negate", theme::op_color("negate")).clicked() {
+                        self.add_op("negate");
                     }
                 });
                 ui.add_space(theme::SPACE_SM);
@@ -1495,8 +1510,8 @@ fn op_chip_actions(ui: &mut egui::Ui, idx: usize, tag: &str) -> OpChipAction {
                     if remove.clicked() {
                         action.remove = true;
                     }
-                    // Reseed only meaningful for keyed ops.
-                    if matches!(tag, "dense" | "hrr_bind") {
+                    // Reseed meaningful for keyed ops and permute.
+                    if matches!(tag, "dense" | "hrr_bind" | "permute") {
                         let reseed = ui
                             .add(
                                 egui::Button::new(

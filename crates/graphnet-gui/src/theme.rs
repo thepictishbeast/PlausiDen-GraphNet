@@ -49,6 +49,8 @@ pub fn op_color(tag: &str) -> egui::Color32 {
         "identity" => egui::Color32::from_rgb(0x72, 0x86, 0xD3),
         "dense" => egui::Color32::from_rgb(0x3F, 0x7D, 0x58),
         "hrr_bind" => egui::Color32::from_rgb(0xBC, 0x46, 0x4B),
+        "permute" => egui::Color32::from_rgb(0xC8, 0x9F, 0x4A),
+        "negate" => egui::Color32::from_rgb(0xA1, 0x4C, 0xB0),
         _ => TEXT_MUTED,
     }
 }
