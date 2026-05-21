@@ -19,13 +19,18 @@ IPython).
 
 from __future__ import annotations
 
-from graphnet.viz import plot_2d, widgets
+from graphnet.viz import plot_2d, plot_3d, widgets
 from graphnet.viz.plot_2d import (
     available_backends,
     forward_trace_heatmap,
     hypervector_heatmap,
     similarity_matrix,
     stack_graph,
+)
+from graphnet.viz.plot_3d import (
+    forward_trace_3d,
+    hypervector_3d_scatter,
+    stack_graph_3d,
 )
 from graphnet.viz.widgets import (
     forward_trace_repr_html,
@@ -38,13 +43,17 @@ register_jupyter_reprs()
 
 __all__ = [
     "available_backends",
+    "forward_trace_3d",
     "forward_trace_heatmap",
     "forward_trace_repr_html",
+    "hypervector_3d_scatter",
     "hypervector_heatmap",
     "plot_2d",
+    "plot_3d",
     "register_jupyter_reprs",
     "similarity_matrix",
     "stack_graph",
+    "stack_graph_3d",
     "stack_repr_html",
     "widgets",
 ]
