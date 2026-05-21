@@ -11,11 +11,9 @@ pub const SPACE_SM: f32 = 8.0;
 pub const SPACE_MD: f32 = 12.0;
 pub const SPACE_LG: f32 = 18.0;
 pub const SPACE_XL: f32 = 28.0;
-pub const SPACE_XXL: f32 = 44.0;
 
 // --- Typography (px) -----------------------------------------------------
 
-pub const SIZE_DISPLAY: f32 = 34.0;
 pub const SIZE_H1: f32 = 24.0;
 pub const SIZE_H2: f32 = 18.0;
 pub const SIZE_BODY: f32 = 14.5;
