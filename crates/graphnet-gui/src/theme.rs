@@ -72,11 +72,12 @@ pub enum Mode {
 
 pub fn install_mode(ctx: &egui::Context, mode: Mode) {
     match mode {
-        Mode::Dark => install(ctx),
+        Mode::Dark => install_dark(ctx),
         Mode::Light => install_light(ctx),
     }
 }
 
+#[allow(dead_code)]
 pub fn install(ctx: &egui::Context) {
     install_dark(ctx);
 }
@@ -204,6 +205,7 @@ pub fn install_light(ctx: &egui::Context) {
 }
 
 /// Return the BG color appropriate for the current mode.
+#[allow(dead_code)]
 pub fn bg_for(mode: Mode) -> egui::Color32 {
     match mode {
         Mode::Dark => BG,
@@ -211,6 +213,7 @@ pub fn bg_for(mode: Mode) -> egui::Color32 {
     }
 }
 
+#[allow(dead_code)]
 pub fn bg_card_for(mode: Mode) -> egui::Color32 {
     match mode {
         Mode::Dark => BG_CARD,
@@ -218,6 +221,7 @@ pub fn bg_card_for(mode: Mode) -> egui::Color32 {
     }
 }
 
+#[allow(dead_code)]
 pub fn bg_card_hover_for(mode: Mode) -> egui::Color32 {
     match mode {
         Mode::Dark => BG_CARD_HOVER,
@@ -225,6 +229,7 @@ pub fn bg_card_hover_for(mode: Mode) -> egui::Color32 {
     }
 }
 
+#[allow(dead_code)]
 pub fn text_muted_for(mode: Mode) -> egui::Color32 {
     match mode {
         Mode::Dark => TEXT_MUTED,
@@ -232,6 +237,7 @@ pub fn text_muted_for(mode: Mode) -> egui::Color32 {
     }
 }
 
+#[allow(dead_code)]
 pub fn text_dim_for(mode: Mode) -> egui::Color32 {
     match mode {
         Mode::Dark => TEXT_DIM,
@@ -239,6 +245,7 @@ pub fn text_dim_for(mode: Mode) -> egui::Color32 {
     }
 }
 
+#[allow(dead_code)]
 pub fn border_subtle_for(mode: Mode) -> egui::Color32 {
     match mode {
         Mode::Dark => BORDER_SUBTLE,
