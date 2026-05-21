@@ -15,6 +15,7 @@ authors = ["William Armstrong / PlausiDen"]
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
+sysinfo = "0.32"
 serde_json = "1"
 serde_yaml = "0.9"
 bincode = { version = "2", features = ["serde"] }

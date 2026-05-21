@@ -20,6 +20,7 @@ pub mod continuous;
 pub mod history;
 pub mod intervene;
 pub mod model;
+pub mod monitor;
 pub mod op;
 pub mod snapshot;
 pub mod stack;
@@ -29,6 +30,7 @@ pub use continuous::{ContinuousError, ContinuousRunner, ForwardEvent};
 pub use history::{HistoryError, InterventionHistory, DEFAULT_HISTORY_CAPACITY};
 pub use intervene::{apply_intervention, undo, Intervention, InterventionError, UndoToken};
 pub use model::{ArchSummary, ExternalModel, Model, ModelError};
+pub use monitor::{estimate_cost, flop_estimate, CostEstimate, ResourceMonitor, ResourceSample};
 pub use op::{Operation, OperationError};
 pub use snapshot::{
     restore, signed_snapshot, snapshot, verify_and_restore, SignedSnapshot, SnapshotError,

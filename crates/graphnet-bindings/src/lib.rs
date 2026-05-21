@@ -215,6 +215,7 @@ impl PyStack {
     /// you can pass to [`undo_intervention`] to reverse it).
     ///
     /// `kind` is `"add"`, `"remove"`, or `"replace"`.
+    #[pyo3(signature = (kind, op=None, index=None))]
     fn apply_intervention(
         &mut self,
         kind: &str,

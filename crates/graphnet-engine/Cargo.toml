@@ -25,6 +25,7 @@ rand_chacha.workspace = true
 blake3.workspace = true
 uuid.workspace = true
 chrono.workspace = true
+sysinfo.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
