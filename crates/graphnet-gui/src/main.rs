@@ -45,6 +45,15 @@ struct App {
     mode: theme::Mode,
     show_help: bool,
     reseed_counter: u64,
+    zoom_target: Option<ZoomTarget>,
+    dim_slider: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ZoomTarget {
+    Input,
+    Output,
+    PerOp(usize),
 }
 
 const TEMPLATES: &[(&str, &str, usize)] = &[
@@ -78,6 +87,8 @@ impl App {
             mode: theme::Mode::Dark,
             show_help: false,
             reseed_counter: 0,
+            zoom_target: None,
+            dim_slider: 10_000,
         };
         app.load_template("stack-standard");
         // Try to restore previous session.
@@ -137,6 +148,27 @@ impl App {
         self.selected_op = None;
         self.last_latency_ms = None;
         self.last_cos_sim = None;
+        self.dim_slider = dim;
+    }
+
+    /// Change the dimensionality on the fly. Drops all ops and the
+    /// trace history since hypervectors at the old dim are now invalid.
+    fn set_dim(&mut self, new_dim: usize) {
+        if new_dim == self.dim {
+            return;
+        }
+        self.dim = new_dim;
+        self.input = Hypervector::random_seeded(new_dim, self.input_seed);
+        self.stack = Stack::new(new_dim);
+        self.last_output = None;
+        self.last_trace = None;
+        self.selected_op = None;
+        self.last_latency_ms = None;
+        self.last_cos_sim = None;
+        self.cos_sim_history.clear();
+        self.latency_history.clear();
+        self.dim_slider = new_dim;
+        self.set_status(format!("dim → {new_dim}; stack cleared"));
     }
 
     fn regenerate_input(&mut self) {
@@ -544,6 +576,32 @@ impl eframe::App for App {
                     metric(ui, "ops", &summary.substructures.to_string());
                 });
 
+                ui.add_space(theme::SPACE_MD);
+                section_heading(ui, "Dim");
+                ui.add_space(theme::SPACE_XS);
+                ui.label(
+                    egui::RichText::new(format!("{}", self.dim_slider))
+                        .size(theme::SIZE_BODY)
+                        .color(theme::TEXT_PRIMARY)
+                        .strong(),
+                );
+                let mut slider_value = self.dim_slider;
+                let slider_resp = ui.add(
+                    egui::Slider::new(&mut slider_value, 256..=16_384)
+                        .logarithmic(true)
+                        .show_value(false)
+                        .text(""),
+                );
+                self.dim_slider = slider_value;
+                if slider_resp.drag_stopped() || slider_resp.lost_focus() {
+                    self.set_dim(self.dim_slider);
+                }
+                ui.label(
+                    egui::RichText::new("(drag-and-release to apply; stack clears)")
+                        .size(theme::SIZE_TINY)
+                        .color(theme::TEXT_DIM),
+                );
+
                 ui.add_space(theme::SPACE_LG);
                 section_heading(ui, "Operations");
                 ui.add_space(theme::SPACE_SM);
@@ -656,7 +714,9 @@ impl eframe::App for App {
                         );
                     });
                     ui.add_space(theme::SPACE_SM);
-                    hypervector_heatmap(ui, &input_clone, 80, 4.0);
+                    if hypervector_heatmap_clickable(ui, &input_clone, 80, 4.0) {
+                        self.zoom_target = Some(ZoomTarget::Input);
+                    }
                 });
                 ui.add_space(theme::SPACE_SM);
                 ui.horizontal(|ui| {
@@ -745,6 +805,7 @@ impl eframe::App for App {
                 }
 
                 ui.add_space(theme::SPACE_LG);
+                let mut zoom_request: Option<ZoomTarget> = None;
                 if let Some(out) = self.last_output.clone() {
                     section_heading(ui, "Output");
                     ui.add_space(theme::SPACE_SM);
@@ -760,7 +821,9 @@ impl eframe::App for App {
                             cosine_similarity_bar(ui, s);
                         }
                         ui.add_space(theme::SPACE_SM);
-                        hypervector_heatmap(ui, &out, 80, 4.0);
+                        if hypervector_heatmap_clickable(ui, &out, 80, 4.0) {
+                            zoom_request = Some(ZoomTarget::Output);
+                        }
                     });
 
                     // Per-op output inspector (uses ForwardTrace).
@@ -822,7 +885,11 @@ impl eframe::App for App {
                                         metric(ui, "cos_sim → bundled", &format!("{s:+.3}"));
                                     }
                                     ui.add_space(theme::SPACE_SM);
-                                    hypervector_heatmap(ui, &op_out.output, 80, 4.0);
+                                    if hypervector_heatmap_clickable(
+                                        ui, &op_out.output, 80, 4.0,
+                                    ) {
+                                        zoom_request = Some(ZoomTarget::PerOp(idx));
+                                    }
                                 });
                             }
                         }
@@ -834,7 +901,70 @@ impl eframe::App for App {
                             .italics(),
                     );
                 }
+                if let Some(z) = zoom_request {
+                    self.zoom_target = Some(z);
+                }
             });
+
+        // Zoom modal.
+        if let Some(target) = self.zoom_target {
+            let hv = match target {
+                ZoomTarget::Input => Some(self.input.clone()),
+                ZoomTarget::Output => self.last_output.clone(),
+                ZoomTarget::PerOp(idx) => self
+                    .last_trace
+                    .as_ref()
+                    .and_then(|t| t.per_op.get(idx).map(|o| o.output.clone())),
+            };
+            let title = match target {
+                ZoomTarget::Input => "Input — full view".to_string(),
+                ZoomTarget::Output => "Output — full view".to_string(),
+                ZoomTarget::PerOp(idx) => format!("Per-op [{idx}] — full view"),
+            };
+            if let Some(v) = hv {
+                let mut close = false;
+                egui::Window::new(title)
+                    .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                    .collapsible(false)
+                    .resizable(false)
+                    .frame(
+                        egui::Frame::none()
+                            .fill(theme::BG_CARD)
+                            .stroke(egui::Stroke::new(1.0, theme::BORDER_ACCENT))
+                            .rounding(egui::Rounding::same(theme::RADIUS_LG))
+                            .inner_margin(egui::Margin::same(theme::SPACE_XL)),
+                    )
+                    .show(ctx, |ui| {
+                        // Larger cells: 6 px instead of 4.
+                        let cols = (v.dim() as f32).sqrt().ceil() as usize;
+                        let cols = cols.clamp(40, 160);
+                        hypervector_heatmap(ui, &v, cols, 6.0);
+                        ui.add_space(theme::SPACE_SM);
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(format!("dim = {}", v.dim()))
+                                    .color(theme::TEXT_MUTED)
+                                    .size(theme::SIZE_SMALL),
+                            );
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui.button("Close (Esc)").clicked() {
+                                        close = true;
+                                    }
+                                },
+                            );
+                        });
+                    });
+                if close
+                    || ctx.input(|i| i.key_pressed(egui::Key::Escape))
+                {
+                    self.zoom_target = None;
+                }
+            } else {
+                self.zoom_target = None;
+            }
+        }
     }
 }
 
@@ -953,6 +1083,58 @@ fn op_chip_actions(ui: &mut egui::Ui, idx: usize, tag: &str) -> OpChipAction {
             });
         });
     action
+}
+
+/// Clickable variant: returns true if the user clicked the heatmap (to
+/// request zoom). Otherwise mirrors `hypervector_heatmap`.
+fn hypervector_heatmap_clickable(
+    ui: &mut egui::Ui,
+    v: &Hypervector,
+    cols: usize,
+    cell: f32,
+) -> bool {
+    let dim = v.dim();
+    let rows = dim.div_ceil(cols);
+    let total_w = cols as f32 * cell;
+    let total_h = rows as f32 * cell;
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(total_w, total_h), egui::Sense::click());
+    let painter = ui.painter_at(rect);
+    let data = v.as_slice();
+    for i in 0..dim {
+        let r = i / cols;
+        let c = i % cols;
+        let x = rect.min.x + c as f32 * cell;
+        let y = rect.min.y + r as f32 * cell;
+        let colour = if data[i] > 0 {
+            theme::ACCENT_BLUE
+        } else {
+            theme::ACCENT_PURPLE.gamma_multiply(0.55)
+        };
+        painter.rect_filled(
+            egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(cell - 1.0, cell - 1.0)),
+            0.0,
+            colour,
+        );
+    }
+    // Hover tooltip.
+    if let Some(pos) = response.hover_pos() {
+        let local = pos - rect.min;
+        let c = (local.x / cell).floor() as i64;
+        let r = (local.y / cell).floor() as i64;
+        if c >= 0 && r >= 0 && (c as usize) < cols && (r as usize) < rows {
+            let idx = (r as usize) * cols + (c as usize);
+            if idx < dim {
+                response
+                    .clone()
+                    .on_hover_text_at_pointer(format!(
+                        "index {idx}  →  {:+}  ·  click to zoom",
+                        data[idx]
+                    ));
+            }
+        }
+    }
+    response.clicked()
 }
 
 fn hypervector_heatmap(ui: &mut egui::Ui, v: &Hypervector, cols: usize, cell: f32) {
