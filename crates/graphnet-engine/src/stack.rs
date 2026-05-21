@@ -110,6 +110,17 @@ impl Stack {
         std::mem::replace(&mut self.operations[index], op)
     }
 
+    /// Move the op at `from` to position `to`. No-op if either index is
+    /// out of range or they are equal. Shifts intervening ops.
+    pub fn move_operation(&mut self, from: usize, to: usize) {
+        let n = self.operations.len();
+        if from >= n || to >= n || from == to {
+            return;
+        }
+        let op = self.operations.remove(from);
+        self.operations.insert(to, op);
+    }
+
     /// Returns the Stack's dimensionality.
     #[must_use]
     pub fn dim(&self) -> usize {

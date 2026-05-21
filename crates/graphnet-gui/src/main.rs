@@ -54,6 +54,8 @@ struct App {
     arch_yaw: f32,
     /// Auto-rotate the 3D arch graph?
     arch_autorotate: bool,
+    /// Op index currently being dragged in the sidebar (for reorder).
+    drag_source: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -270,6 +272,7 @@ impl App {
             spawn_time: std::time::Instant::now(),
             arch_yaw: 0.6,
             arch_autorotate: false,
+            drag_source: None,
         };
         app.load_template("standard");
         // Try to restore previous session.
@@ -933,15 +936,43 @@ impl eframe::App for App {
                     .collect();
                 let mut to_remove: Option<usize> = None;
                 let mut to_reseed: Option<usize> = None;
+                let mut drag_drop_target: Option<usize> = None;
+                let drag_active = self.drag_source.is_some();
                 for (idx, tag) in &ops {
-                    let action = op_chip_actions(ui, *idx, tag);
+                    let action = op_chip_actions_with_drag(
+                        ui,
+                        *idx,
+                        tag,
+                        self.drag_source == Some(*idx),
+                        drag_active,
+                    );
                     if action.remove {
                         to_remove = Some(*idx);
                     }
                     if action.reseed {
                         to_reseed = Some(*idx);
                     }
+                    if action.start_drag {
+                        self.drag_source = Some(*idx);
+                    }
+                    if action.drop_here {
+                        drag_drop_target = Some(*idx);
+                    }
                     ui.add_space(theme::SPACE_XS);
+                }
+                // Drag released without a target → cancel.
+                if !ctx.input(|i| i.pointer.any_down()) && self.drag_source.is_some() {
+                    if let Some(to) = drag_drop_target {
+                        if let Some(from) = self.drag_source {
+                            if from != to {
+                                self.stack.move_operation(from, to);
+                                self.set_status(format!(
+                                    "moved op [{from}] → [{to}]"
+                                ));
+                            }
+                        }
+                    }
+                    self.drag_source = None;
                 }
                 if let Some(i) = to_remove {
                     self.remove_op(i);
@@ -1509,8 +1540,100 @@ fn mini_button(ui: &mut egui::Ui, text: &str, accent: egui::Color32) -> egui::Re
 struct OpChipAction {
     remove: bool,
     reseed: bool,
+    start_drag: bool,
+    drop_here: bool,
 }
 
+/// Op chip with drag-and-drop reorder support.
+/// `is_being_dragged`: this chip is the drag source (visual feedback).
+/// `drag_active`: SOME chip is being dragged (controls drop-target hover state).
+fn op_chip_actions_with_drag(
+    ui: &mut egui::Ui,
+    idx: usize,
+    tag: &str,
+    is_being_dragged: bool,
+    drag_active: bool,
+) -> OpChipAction {
+    let mut action = OpChipAction::default();
+    let bg = theme::op_color(tag).gamma_multiply(if is_being_dragged { 0.6 } else { 0.25 });
+    let fg = theme::op_color(tag);
+    let frame = egui::Frame::none()
+        .fill(bg)
+        .stroke(egui::Stroke::new(
+            if is_being_dragged { 2.0 } else { 1.0 },
+            fg,
+        ))
+        .rounding(egui::Rounding::same(theme::RADIUS_PILL))
+        .inner_margin(egui::Margin::symmetric(theme::SPACE_MD, theme::SPACE_SM));
+
+    let resp = frame
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(format!("⋮ {idx:02}"))
+                        .color(theme::TEXT_MUTED)
+                        .size(theme::SIZE_TINY)
+                        .monospace(),
+                );
+                ui.label(
+                    egui::RichText::new(tag)
+                        .color(fg)
+                        .size(theme::SIZE_BODY)
+                        .strong(),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let remove = ui.add(
+                        egui::Button::new(
+                            egui::RichText::new("×")
+                                .size(theme::SIZE_BODY)
+                                .color(theme::TEXT_MUTED),
+                        )
+                        .fill(egui::Color32::TRANSPARENT)
+                        .stroke(egui::Stroke::NONE)
+                        .min_size(egui::vec2(20.0, 20.0)),
+                    );
+                    if remove.clicked() {
+                        action.remove = true;
+                    }
+                    if matches!(tag, "dense" | "hrr_bind" | "permute") {
+                        let reseed = ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("⟳")
+                                        .size(theme::SIZE_SMALL)
+                                        .color(fg),
+                                )
+                                .fill(egui::Color32::TRANSPARENT)
+                                .stroke(egui::Stroke::NONE)
+                                .min_size(egui::vec2(20.0, 20.0)),
+                            )
+                            .on_hover_text("reseed key");
+                        if reseed.clicked() {
+                            action.reseed = true;
+                        }
+                    }
+                });
+            });
+        })
+        .response;
+    // Whole-row drag detection.
+    let row_resp = ui.interact(resp.rect, egui::Id::new(("op_chip_drag", idx)), egui::Sense::drag());
+    if row_resp.drag_started() {
+        action.start_drag = true;
+    }
+    if drag_active && row_resp.hovered() {
+        action.drop_here = true;
+        // Visual feedback: thick stroke on the drop target.
+        ui.painter().rect_stroke(
+            resp.rect,
+            egui::Rounding::same(theme::RADIUS_PILL),
+            egui::Stroke::new(2.0, theme::ACCENT_PURPLE),
+        );
+    }
+    action
+}
+
+#[allow(dead_code)]
 fn op_chip_actions(ui: &mut egui::Ui, idx: usize, tag: &str) -> OpChipAction {
     let mut action = OpChipAction::default();
     let bg = theme::op_color(tag).gamma_multiply(0.25);
