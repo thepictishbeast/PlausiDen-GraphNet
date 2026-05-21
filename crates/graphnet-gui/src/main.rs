@@ -531,28 +531,49 @@ impl App {
     }
 
     fn save_yaml(&mut self) {
+        let path = rfd::FileDialog::new()
+            .add_filter("YAML", &["yaml", "yml"])
+            .set_file_name("graphnet-stack.yaml")
+            .set_directory(std::env::current_dir().unwrap_or_else(|_| ".".into()))
+            .save_file();
+        let Some(path) = path else {
+            self.set_status("save cancelled".to_string());
+            return;
+        };
         match stack_to_yaml(&self.stack) {
-            Ok(yaml) => match std::fs::write(YAML_PATH, &yaml) {
-                Ok(_) => self.set_status(format!("saved → {YAML_PATH} ({} bytes)", yaml.len())),
+            Ok(yaml) => match std::fs::write(&path, &yaml) {
+                Ok(_) => self.set_status(format!(
+                    "saved → {} ({} bytes)",
+                    path.display(),
+                    yaml.len()
+                )),
                 Err(e) => self.set_status(format!("save failed: {e}")),
             },
             Err(e) => self.set_status(format!("encode failed: {e}")),
         }
-        // Mirror to persistent state so it survives restart.
         self.persist();
     }
 
     fn load_yaml(&mut self) {
-        match std::fs::read_to_string(YAML_PATH) {
+        let path = rfd::FileDialog::new()
+            .add_filter("YAML", &["yaml", "yml"])
+            .set_directory(std::env::current_dir().unwrap_or_else(|_| ".".into()))
+            .pick_file();
+        let Some(path) = path else {
+            self.set_status("load cancelled".to_string());
+            return;
+        };
+        match std::fs::read_to_string(&path) {
             Ok(yaml) => match stack_from_yaml(&yaml) {
                 Ok(stack) => {
                     self.dim = stack.dim();
                     self.stack = stack;
                     self.input = Hypervector::random_seeded(self.dim, self.input_seed);
                     self.last_output = None;
+                    self.last_trace = None;
                     self.last_latency_ms = None;
                     self.last_cos_sim = None;
-                    self.set_status(format!("loaded ← {YAML_PATH}"));
+                    self.set_status(format!("loaded ← {}", path.display()));
                 }
                 Err(e) => self.set_status(format!("decode failed: {e}")),
             },
