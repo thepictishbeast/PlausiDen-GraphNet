@@ -47,7 +47,72 @@ struct App {
     reseed_counter: u64,
     zoom_target: Option<ZoomTarget>,
     dim_slider: usize,
+    walkthrough_step: Option<usize>,
+    demo: Option<DemoState>,
+    spawn_time: std::time::Instant,
 }
+
+#[derive(Debug, Clone)]
+struct DemoState {
+    template_idx: usize,
+    started_at: std::time::Instant,
+    /// Seconds per template.
+    pace_sec: f64,
+}
+
+const WALKTHROUGH_STEPS: &[(&str, &str)] = &[
+    (
+        "Welcome to GraphNet",
+        "A live REPL + graphing calculator for HDC neural networks. \
+         No training, no GPU model files — just compose operations and \
+         see what the network does, in real time. Press → for the tour.",
+    ),
+    (
+        "1. Pick a template",
+        "The left panel has 8 example configs (minimal · standard · echo-state · \
+         mixture-of-4 · fft-heavy · noise-resilience · dense-cascade · wide-D). \
+         Click one or press 1-8 — each loads a different Stack architecture. \
+         Each template has an explanation you'll see in iter 12.",
+    ),
+    (
+        "2. Run a forward",
+        "Press SPACE (or click '▶ Run forward'). The Stack applies every op \
+         to the input hypervector in parallel, then bundles the outputs into \
+         one HDC vector. The Output card shows the result + cosine similarity \
+         to the input.",
+    ),
+    (
+        "3. Mutate the network live",
+        "Add ops (+Identity / +Dense / +HrrBind), remove (× on chip), reseed \
+         (⟳ regenerates the random key without removing). Drag the Dim slider \
+         to change hypervector dimensionality (256-16,384). The network \
+         updates immediately.",
+    ),
+    (
+        "4. Inspect per-op behavior",
+        "After a forward, the architecture graph and Per-op inspector show \
+         each operation's individual output. Click any chip in the graph or \
+         the inspector chip row to see that op's heatmap + its cos_sim to \
+         both input and bundled output.",
+    ),
+    (
+        "5. Live continuous mode",
+        "Press L (or click '● Start live'). The Stack runs forward every \
+         frame; the status bar shows the FPS. The cos_sim and latency \
+         sparklines fill in over the last 128 forwards.",
+    ),
+    (
+        "6. Save & share",
+        "⌘S (or Ctrl+S) saves the current Stack to YAML at graphnet-stack.yaml. \
+         ⌘O loads it back. The app also auto-saves to ~/.config/graphnet/state.yaml \
+         on every save so your work survives a restart.",
+    ),
+    (
+        "7. Help is always there",
+        "Press H or F1 anytime to see the full shortcuts list. Press Esc to \
+         close any modal. That's the tour — press → one more time to dismiss.",
+    ),
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ZoomTarget {
@@ -56,12 +121,99 @@ enum ZoomTarget {
     PerOp(usize),
 }
 
-const TEMPLATES: &[(&str, &str, usize)] = &[
-    ("stack-tiny", "1 op · D=1k", 1_000),
-    ("stack-standard", "3 ops · D=10k", 10_000),
-    ("stack-dense-only", "4 dense · D=10k", 10_000),
-    ("stack-fft-heavy", "3 hrr · D=1k", 1_024),
+struct Template {
+    name: &'static str,
+    summary: &'static str,
+    explanation: &'static str,
+    dim: usize,
+    /// Op kind tags applied in order: "identity" / "dense" / "hrr_bind".
+    ops: &'static [&'static str],
+}
+
+const TEMPLATES: &[Template] = &[
+    Template {
+        name: "minimal",
+        summary: "1 identity · D=1k",
+        explanation: "Smallest possible Stack — one passthrough op. \
+                      Output equals input. Useful for sanity-checking the pipeline.",
+        dim: 1_000,
+        ops: &["identity"],
+    },
+    Template {
+        name: "standard",
+        summary: "id + dense + hrr · D=10k",
+        explanation: "The canonical heterogeneous Stack: one identity, one dense \
+                      projection, one HRR (FFT-based) binding. Demonstrates all three \
+                      op kinds bundled into a single output.",
+        dim: 10_000,
+        ops: &["identity", "dense", "hrr_bind"],
+    },
+    Template {
+        name: "echo-state",
+        summary: "3 identity + 1 dense",
+        explanation: "Three identity ops + one dense projection. Output is dominated \
+                      by the input (high cos_sim to input) with a small dense perturbation. \
+                      Models a 'reservoir' that mostly preserves the signal.",
+        dim: 10_000,
+        ops: &["identity", "identity", "identity", "dense"],
+    },
+    Template {
+        name: "mixture-of-4",
+        summary: "4 dense projections",
+        explanation: "Four parallel dense projections with different random keys. \
+                      Each op produces an independent transformation; the bundle \
+                      averages them — analogous to a mixture-of-experts with equal weights.",
+        dim: 10_000,
+        ops: &["dense", "dense", "dense", "dense"],
+    },
+    Template {
+        name: "fft-heavy",
+        summary: "3 hrr (FFT bindings)",
+        explanation: "Three HRR (Holographic Reduced Representation) bindings via FFT \
+                      circular convolution. Highest per-forward cost; watch the latency \
+                      sparkline. D=1024 (power of 2 for FFT efficiency).",
+        dim: 1_024,
+        ops: &["hrr_bind", "hrr_bind", "hrr_bind"],
+    },
+    Template {
+        name: "noise-resilience",
+        summary: "8 mixed ops",
+        explanation: "Eight ops mixing identity + dense + hrr_bind. Even with this much \
+                      cross-talk, the bundled output retains meaningful similarity to the \
+                      input — demonstrates HDC's noise robustness.",
+        dim: 10_000,
+        ops: &[
+            "identity",
+            "dense",
+            "hrr_bind",
+            "identity",
+            "dense",
+            "hrr_bind",
+            "dense",
+            "identity",
+        ],
+    },
+    Template {
+        name: "dense-cascade",
+        summary: "6 dense ops · D=10k",
+        explanation: "Six dense projections — denser network, higher latency. Compare \
+                      cos_sim(input, output) against the 4-projection mixture: more ops \
+                      generally drives output toward the centroid of the key space.",
+        dim: 10_000,
+        ops: &["dense", "dense", "dense", "dense", "dense", "dense"],
+    },
+    Template {
+        name: "wide-D",
+        summary: "id + dense · D=16k",
+        explanation: "Same as standard but at D=16,384. Wider hypervectors → more \
+                      capacity (more distinguishable random vectors) at the cost of \
+                      latency and memory.",
+        dim: 16_384,
+        ops: &["identity", "dense"],
+    },
 ];
+
+const FIRST_RUN_PATH: &str = ".graphnet_seen_walkthrough";
 
 impl App {
     fn new(ctx: &egui::Context) -> Self {
@@ -89,11 +241,77 @@ impl App {
             reseed_counter: 0,
             zoom_target: None,
             dim_slider: 10_000,
+            walkthrough_step: None,
+            demo: None,
+            spawn_time: std::time::Instant::now(),
         };
-        app.load_template("stack-standard");
+        app.load_template("standard");
         // Try to restore previous session.
         let _ = app.restore();
+        // First-run walkthrough.
+        let walkthrough_marker = persistent_state_path()
+            .parent()
+            .map(|p| p.join(FIRST_RUN_PATH))
+            .unwrap_or_else(|| std::path::PathBuf::from(FIRST_RUN_PATH));
+        if !walkthrough_marker.exists() {
+            app.walkthrough_step = Some(0);
+        }
         app
+    }
+
+    fn dismiss_walkthrough(&mut self) {
+        self.walkthrough_step = None;
+        let marker = persistent_state_path()
+            .parent()
+            .map(|p| p.join(FIRST_RUN_PATH))
+            .unwrap_or_else(|| std::path::PathBuf::from(FIRST_RUN_PATH));
+        if let Some(parent) = marker.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&marker, b"1");
+    }
+
+    fn start_demo(&mut self) {
+        self.demo = Some(DemoState {
+            template_idx: 0,
+            started_at: std::time::Instant::now(),
+            pace_sec: 2.5,
+        });
+        self.set_status("Demo started — cycling templates".to_string());
+    }
+
+    fn stop_demo(&mut self) {
+        self.demo = None;
+        self.set_status("Demo stopped".to_string());
+    }
+
+    fn tick_demo(&mut self) {
+        let Some(demo) = self.demo.clone() else {
+            return;
+        };
+        let elapsed = demo.started_at.elapsed().as_secs_f64();
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let target_idx = (elapsed / demo.pace_sec) as usize;
+        if target_idx >= TEMPLATES.len() {
+            self.set_status("Demo complete — try templates yourself".to_string());
+            self.demo = None;
+            return;
+        }
+        if target_idx != demo.template_idx {
+            let t = TEMPLATES[target_idx].name;
+            self.load_template(t);
+            self.run_forward();
+            self.set_status(format!(
+                "Demo step {}/{}: {} — {}",
+                target_idx + 1,
+                TEMPLATES.len(),
+                t,
+                TEMPLATES[target_idx].summary
+            ));
+            if let Some(d) = self.demo.as_mut() {
+                d.template_idx = target_idx;
+            }
+        }
     }
 
     fn toggle_mode(&mut self, ctx: &egui::Context) {
@@ -105,43 +323,28 @@ impl App {
     }
 
     fn load_template(&mut self, name: &'static str) {
-        self.template = name;
-        let dim = TEMPLATES
+        let template = TEMPLATES
             .iter()
-            .find(|(n, _, _)| *n == name)
-            .map(|(_, _, d)| *d)
-            .unwrap_or(10_000);
+            .find(|t| t.name == name)
+            .unwrap_or(&TEMPLATES[1]);
+        self.template = template.name;
+        let dim = template.dim;
         self.dim = dim;
         self.input = Hypervector::random_seeded(dim, self.input_seed);
         self.stack = Stack::new(dim);
-        match name {
-            "stack-tiny" => {
-                self.stack.add_operation(Operation::Identity);
-            }
-            "stack-standard" => {
-                self.stack.add_operation(Operation::Identity);
-                self.stack.add_operation(Operation::Dense {
-                    key: Hypervector::random_seeded(dim, 1),
-                });
-                self.stack.add_operation(Operation::HrrBind {
-                    key: Hypervector::random_seeded(dim, 2),
-                });
-            }
-            "stack-dense-only" => {
-                for s in 1..=4 {
-                    self.stack.add_operation(Operation::Dense {
-                        key: Hypervector::random_seeded(dim, s),
-                    });
-                }
-            }
-            "stack-fft-heavy" => {
-                for s in 10..13 {
-                    self.stack.add_operation(Operation::HrrBind {
-                        key: Hypervector::random_seeded(dim, s),
-                    });
-                }
-            }
-            _ => {}
+        for (i, kind) in template.ops.iter().enumerate() {
+            let seed = (i as u64) + 1;
+            let op = match *kind {
+                "identity" => Operation::Identity,
+                "dense" => Operation::Dense {
+                    key: Hypervector::random_seeded(dim, seed),
+                },
+                "hrr_bind" => Operation::HrrBind {
+                    key: Hypervector::random_seeded(dim, seed + 100),
+                },
+                _ => continue,
+            };
+            self.stack.add_operation(op);
         }
         self.last_output = None;
         self.last_trace = None;
@@ -326,6 +529,7 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let mut advance_walkthrough = false;
         ctx.input(|i| {
             if i.key_pressed(egui::Key::Space) {
                 self.run_forward();
@@ -336,17 +540,22 @@ impl eframe::App for App {
             if i.key_pressed(egui::Key::L) {
                 self.live = !self.live;
             }
-            if i.key_pressed(egui::Key::Num1) {
-                self.load_template("stack-tiny");
-            }
-            if i.key_pressed(egui::Key::Num2) {
-                self.load_template("stack-standard");
-            }
-            if i.key_pressed(egui::Key::Num3) {
-                self.load_template("stack-dense-only");
-            }
-            if i.key_pressed(egui::Key::Num4) {
-                self.load_template("stack-fft-heavy");
+            let template_keys = [
+                egui::Key::Num1,
+                egui::Key::Num2,
+                egui::Key::Num3,
+                egui::Key::Num4,
+                egui::Key::Num5,
+                egui::Key::Num6,
+                egui::Key::Num7,
+                egui::Key::Num8,
+            ];
+            for (idx, key) in template_keys.iter().enumerate() {
+                if i.key_pressed(*key) {
+                    if let Some(t) = TEMPLATES.get(idx) {
+                        self.load_template(t.name);
+                    }
+                }
             }
             if (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::S) {
                 self.save_yaml();
@@ -359,8 +568,28 @@ impl eframe::App for App {
             }
             if i.key_pressed(egui::Key::Escape) {
                 self.show_help = false;
+                self.zoom_target = None;
+                if self.walkthrough_step.is_some() {
+                    self.walkthrough_step = None;
+                }
+            }
+            if i.key_pressed(egui::Key::ArrowRight) && self.walkthrough_step.is_some() {
+                advance_walkthrough = true;
             }
         });
+        if advance_walkthrough {
+            let next = self.walkthrough_step.map(|s| s + 1).unwrap_or(0);
+            if next >= WALKTHROUGH_STEPS.len() {
+                self.dismiss_walkthrough();
+            } else {
+                self.walkthrough_step = Some(next);
+            }
+        }
+        // Demo tick.
+        if self.demo.is_some() {
+            self.tick_demo();
+            ctx.request_repaint();
+        }
 
         if self.live {
             self.run_forward();
@@ -421,10 +650,59 @@ impl eframe::App for App {
                         if toggle.clicked() {
                             self.toggle_mode(ctx);
                         }
+                        ui.add_space(theme::SPACE_SM);
+                        // Demo button — pulses while playing.
+                        let demo_label =
+                            if self.demo.is_some() { "■ Stop demo" } else { "▶ Demo" };
+                        let demo_btn = ui.add(
+                            egui::Button::new(
+                                egui::RichText::new(demo_label)
+                                    .size(theme::SIZE_SMALL)
+                                    .color(egui::Color32::WHITE)
+                                    .strong(),
+                            )
+                            .fill(if self.demo.is_some() {
+                                theme::ACCENT_PURPLE
+                            } else {
+                                egui::Color32::from_white_alpha(40)
+                            })
+                            .stroke(egui::Stroke::new(
+                                1.0,
+                                egui::Color32::from_white_alpha(180),
+                            ))
+                            .rounding(egui::Rounding::same(theme::RADIUS_SM))
+                            .min_size(egui::vec2(72.0, 28.0)),
+                        );
+                        if demo_btn.clicked() {
+                            if self.demo.is_some() {
+                                self.stop_demo();
+                            } else {
+                                self.start_demo();
+                            }
+                        }
+                        ui.add_space(theme::SPACE_SM);
+                        let help_btn = ui.add(
+                            egui::Button::new(
+                                egui::RichText::new("? Help")
+                                    .size(theme::SIZE_SMALL)
+                                    .color(egui::Color32::WHITE)
+                                    .strong(),
+                            )
+                            .fill(egui::Color32::from_white_alpha(40))
+                            .stroke(egui::Stroke::new(
+                                1.0,
+                                egui::Color32::from_white_alpha(120),
+                            ))
+                            .rounding(egui::Rounding::same(theme::RADIUS_SM))
+                            .min_size(egui::vec2(60.0, 28.0)),
+                        );
+                        if help_btn.clicked() {
+                            self.show_help = !self.show_help;
+                        }
                         ui.add_space(theme::SPACE_MD);
                         ui.label(
                             egui::RichText::new(
-                                "[Space] fwd · [R] regen · [L] live · [1-4] tpl · [⌘S/⌘O] yaml",
+                                "[Space] fwd · [R] regen · [L] live · [1-8] tpl · [⌘S/⌘O] yaml",
                             )
                             .size(theme::SIZE_TINY)
                             .color(egui::Color32::from_white_alpha(160))
@@ -524,10 +802,10 @@ impl eframe::App for App {
                     .inner_margin(egui::Margin::same(theme::SPACE_LG)),
             )
             .show(ctx, |ui| {
-                section_heading(ui, "Templates");
+                section_heading(ui, "Example configs");
                 ui.add_space(theme::SPACE_SM);
-                for (i, (name, desc, _)) in TEMPLATES.iter().enumerate() {
-                    let active = *name == self.template;
+                for (i, template) in TEMPLATES.iter().enumerate() {
+                    let active = template.name == self.template;
                     let chip_fill = if active {
                         theme::ACCENT_MID
                     } else {
@@ -538,19 +816,26 @@ impl eframe::App for App {
                     } else {
                         theme::BORDER_SUBTLE
                     };
-                    let resp = ui.add(
-                        egui::Button::new(
-                            egui::RichText::new(format!("{}  ·  {name}\n{desc}", i + 1))
+                    let resp = ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new(format!(
+                                    "{}  ·  {}\n{}",
+                                    i + 1,
+                                    template.name,
+                                    template.summary
+                                ))
                                 .size(theme::SIZE_SMALL)
                                 .color(theme::TEXT_PRIMARY),
+                            )
+                            .fill(chip_fill)
+                            .stroke(egui::Stroke::new(1.0, chip_stroke))
+                            .rounding(egui::Rounding::same(theme::RADIUS_MD))
+                            .min_size(egui::vec2(ui.available_width(), 44.0)),
                         )
-                        .fill(chip_fill)
-                        .stroke(egui::Stroke::new(1.0, chip_stroke))
-                        .rounding(egui::Rounding::same(theme::RADIUS_MD))
-                        .min_size(egui::vec2(ui.available_width(), 44.0)),
-                    );
+                        .on_hover_text(template.explanation);
                     if resp.clicked() {
-                        self.load_template(name);
+                        self.load_template(template.name);
                     }
                     ui.add_space(theme::SPACE_XS);
                 }
@@ -648,6 +933,100 @@ impl eframe::App for App {
                     self.reset_stack();
                 }
             });
+
+        // Walkthrough overlay — first-run tutorial.
+        if let Some(step) = self.walkthrough_step {
+            let (title, body) = WALKTHROUGH_STEPS
+                .get(step)
+                .copied()
+                .unwrap_or((WALKTHROUGH_STEPS[0].0, WALKTHROUGH_STEPS[0].1));
+            let mut close = false;
+            let mut advance = false;
+            egui::Window::new(format!("Walkthrough {}/{}", step + 1, WALKTHROUGH_STEPS.len()))
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .collapsible(false)
+                .resizable(false)
+                .frame(
+                    egui::Frame::none()
+                        .fill(theme::BG_CARD)
+                        .stroke(egui::Stroke::new(1.5, theme::ACCENT_PURPLE))
+                        .rounding(egui::Rounding::same(theme::RADIUS_LG))
+                        .inner_margin(egui::Margin::same(theme::SPACE_XL)),
+                )
+                .show(ctx, |ui| {
+                    ui.set_min_width(540.0);
+                    ui.label(
+                        egui::RichText::new(title)
+                            .size(theme::SIZE_H1)
+                            .color(theme::ACCENT_BLUE)
+                            .strong(),
+                    );
+                    ui.add_space(theme::SPACE_MD);
+                    ui.label(
+                        egui::RichText::new(body)
+                            .size(theme::SIZE_BODY)
+                            .color(theme::TEXT_PRIMARY),
+                    );
+                    ui.add_space(theme::SPACE_LG);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(
+                                egui::RichText::new("Skip tour")
+                                    .size(theme::SIZE_SMALL)
+                                    .color(theme::TEXT_MUTED),
+                            )
+                            .clicked()
+                        {
+                            close = true;
+                        }
+                        ui.with_layout(
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                let label = if step + 1 >= WALKTHROUGH_STEPS.len() {
+                                    "Finish ✓"
+                                } else {
+                                    "Next →"
+                                };
+                                let next = ui.add(
+                                    egui::Button::new(
+                                        egui::RichText::new(label)
+                                            .size(theme::SIZE_BODY)
+                                            .color(egui::Color32::WHITE)
+                                            .strong(),
+                                    )
+                                    .fill(theme::ACCENT_MID)
+                                    .rounding(egui::Rounding::same(theme::RADIUS_MD))
+                                    .min_size(egui::vec2(120.0, 36.0)),
+                                );
+                                if next.clicked() {
+                                    advance = true;
+                                }
+                            },
+                        );
+                    });
+                    ui.add_space(theme::SPACE_SM);
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Press → to advance · Esc to dismiss · Step {}/{}",
+                            step + 1,
+                            WALKTHROUGH_STEPS.len()
+                        ))
+                        .size(theme::SIZE_TINY)
+                        .color(theme::TEXT_DIM),
+                    );
+                });
+            if advance {
+                let next = step + 1;
+                if next >= WALKTHROUGH_STEPS.len() {
+                    self.dismiss_walkthrough();
+                } else {
+                    self.walkthrough_step = Some(next);
+                }
+            }
+            if close {
+                self.dismiss_walkthrough();
+            }
+        }
 
         // Help overlay.
         if self.show_help {
