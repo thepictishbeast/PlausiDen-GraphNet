@@ -69,12 +69,17 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pytest hypothesis ruff mypy maturin
+          # heavy viz deps used by python/tests/test_viz*.py
+          pip install matplotlib plotly scikit-learn graphviz
 
       - name: ruff check
         run: ruff check python/
 
-      - name: build native extension with maturin
-        run: maturin develop --release
+      - name: build + install native extension
+        # pip install -e . routes through the maturin PEP 517 backend
+        # declared in pyproject.toml, which works with the system Python
+        # (no venv required, unlike `maturin develop`).
+        run: pip install -e . --no-build-isolation
 
       - name: pytest (includes native bindings tests)
         run: pytest python/tests/ -q
