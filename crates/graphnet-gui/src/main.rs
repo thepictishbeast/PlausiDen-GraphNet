@@ -91,6 +91,12 @@ struct App {
     colormap: Colormap,
     /// Show the templates popup modal? (#745)
     show_templates_popup: bool,
+    /// Show the console/REPL pane? Toggled by backtick (#747).
+    show_console: bool,
+    /// Console input buffer.
+    console_input: String,
+    /// Console history of (command, output) lines.
+    console_history: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -519,6 +525,9 @@ impl App {
             objective_done: vec![false; OBJECTIVES.len()],
             colormap: Colormap::Bipolar,
             show_templates_popup: false,
+            show_console: false,
+            console_input: String::new(),
+            console_history: Vec::new(),
         };
         app.load_template("standard");
         // Try to restore previous session.
@@ -751,6 +760,127 @@ impl App {
             self.forwards = self.forwards.saturating_add(1);
             self.last_forward_at = Some(std::time::Instant::now());
             self.check_achievements();
+        }
+    }
+
+    /// Parse + execute a REPL command. Returns user-visible output.
+    fn run_console_cmd(&mut self, cmd: &str) -> String {
+        let cmd = cmd.trim();
+        if cmd.is_empty() {
+            return String::new();
+        }
+        let parts: Vec<&str> = cmd.split_whitespace().collect();
+        match parts.as_slice() {
+            ["help"] | ["?"] => {
+                "Commands:\n  fwd / forward          run a forward\n  \
+                 live                   toggle live mode\n  \
+                 add <kind>             add op (identity/dense/hrr_bind/permute/negate)\n  \
+                 rm <idx> | remove <idx>\n  \
+                 reseed <idx>\n  \
+                 dim <n>                set dim (256..16384)\n  \
+                 template <name>        load template\n  \
+                 regen                  regenerate input\n  \
+                 reset                  clear stack\n  \
+                 undo / redo\n  \
+                 save / load\n  \
+                 png                    export PNG\n  \
+                 stat                   print stack summary\n  \
+                 clear                  clear console history".to_string()
+            }
+            ["fwd"] | ["forward"] => {
+                self.run_forward();
+                format!("ran forward (#{} · {:.3} ms)",
+                    self.forwards,
+                    self.last_latency_ms.unwrap_or(0.0))
+            }
+            ["live"] => {
+                self.live = !self.live;
+                format!("live = {}", self.live)
+            }
+            ["add", kind] => {
+                let kind_s = (*kind).to_string();
+                self.add_op(&kind_s);
+                format!("added {kind}")
+            }
+            ["rm", idx_s] | ["remove", idx_s] => {
+                match idx_s.parse::<usize>() {
+                    Ok(i) => {
+                        self.remove_op(i);
+                        format!("removed [{i}]")
+                    }
+                    Err(_) => format!("invalid index: {idx_s}"),
+                }
+            }
+            ["reseed", idx_s] => match idx_s.parse::<usize>() {
+                Ok(i) => {
+                    self.reseed_op(i);
+                    format!("reseeded [{i}]")
+                }
+                Err(_) => format!("invalid index: {idx_s}"),
+            },
+            ["dim", n_s] => match n_s.parse::<usize>() {
+                Ok(n) => {
+                    self.set_dim(n.clamp(256, 16_384));
+                    format!("dim = {}", self.dim)
+                }
+                Err(_) => format!("invalid number: {n_s}"),
+            },
+            ["template", name] => {
+                let name_owned = (*name).to_string();
+                if let Some(t) = TEMPLATES.iter().find(|t| t.name == name_owned) {
+                    self.load_template(t.name);
+                    format!("loaded template '{}'", t.name)
+                } else {
+                    format!(
+                        "unknown template '{name}'. Try one of: {}",
+                        TEMPLATES.iter().map(|t| t.name).collect::<Vec<_>>().join(", ")
+                    )
+                }
+            }
+            ["regen"] => {
+                self.regenerate_input();
+                format!("regenerated input (seed = {})", self.input_seed)
+            }
+            ["reset"] => {
+                self.reset_stack();
+                "stack cleared".to_string()
+            }
+            ["undo"] => {
+                self.undo();
+                "undo".to_string()
+            }
+            ["redo"] => {
+                self.redo();
+                "redo".to_string()
+            }
+            ["save"] => {
+                self.save_yaml();
+                "save dialog".to_string()
+            }
+            ["load"] => {
+                self.load_yaml();
+                "load dialog".to_string()
+            }
+            ["png"] => {
+                self.export_png();
+                "png export".to_string()
+            }
+            ["stat"] => {
+                let ops: Vec<&str> = self.stack.operations().iter().map(|op| op.tag()).collect();
+                format!(
+                    "template={} · dim={} · ops={} · forwards={} · cos_sim={:?}",
+                    self.template,
+                    self.dim,
+                    ops.join(","),
+                    self.forwards,
+                    self.last_cos_sim
+                )
+            }
+            ["clear"] => {
+                self.console_history.clear();
+                "console cleared".to_string()
+            }
+            _ => format!("unknown command: '{cmd}' (try 'help')"),
         }
     }
 
@@ -1166,6 +1296,9 @@ impl eframe::App for App {
             }
             if (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::E) {
                 png_request = true;
+            }
+            if i.key_pressed(egui::Key::Backtick) {
+                self.show_console = !self.show_console;
             }
             if (i.modifiers.command || i.modifiers.ctrl)
                 && !i.modifiers.shift
@@ -1933,6 +2066,100 @@ impl eframe::App for App {
                     self.reset_stack();
                 }
             });
+
+        // Console / REPL pane (#747) — bottom-docked when shown.
+        if self.show_console {
+            let mut submit: Option<String> = None;
+            egui::TopBottomPanel::bottom("console")
+                .resizable(true)
+                .default_height(220.0)
+                .min_height(120.0)
+                .frame(
+                    egui::Frame::none()
+                        .fill(theme::BG_CARD)
+                        .stroke(egui::Stroke::new(1.0, theme::ACCENT_BLUE))
+                        .inner_margin(egui::Margin::same(theme::SPACE_MD)),
+                )
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new("⌨ Console")
+                                .size(theme::SIZE_BODY)
+                                .color(theme::ACCENT_BLUE)
+                                .strong(),
+                        );
+                        ui.label(
+                            egui::RichText::new("(backtick toggles · type 'help')")
+                                .size(theme::SIZE_TINY)
+                                .color(theme::TEXT_MUTED),
+                        );
+                        ui.with_layout(
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                if ui.button("close").clicked() {
+                                    self.show_console = false;
+                                }
+                            },
+                        );
+                    });
+                    ui.separator();
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .max_height(120.0)
+                        .stick_to_bottom(true)
+                        .show(ui, |ui| {
+                            for (cmd, out) in &self.console_history {
+                                ui.label(
+                                    egui::RichText::new(format!("> {cmd}"))
+                                        .size(theme::SIZE_SMALL)
+                                        .color(theme::ACCENT_BLUE)
+                                        .monospace(),
+                                );
+                                if !out.is_empty() {
+                                    ui.label(
+                                        egui::RichText::new(out)
+                                            .size(theme::SIZE_SMALL)
+                                            .color(theme::TEXT_PRIMARY)
+                                            .monospace(),
+                                    );
+                                }
+                                ui.add_space(theme::SPACE_XS);
+                            }
+                        });
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(">")
+                                .color(theme::ACCENT_BLUE)
+                                .strong()
+                                .monospace(),
+                        );
+                        let resp = ui.add(
+                            egui::TextEdit::singleline(&mut self.console_input)
+                                .desired_width(ui.available_width() - 60.0)
+                                .font(egui::TextStyle::Monospace),
+                        );
+                        if resp.lost_focus()
+                            && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                        {
+                            submit = Some(std::mem::take(&mut self.console_input));
+                            resp.request_focus();
+                        }
+                        if ui.button("run").clicked() {
+                            submit = Some(std::mem::take(&mut self.console_input));
+                        }
+                    });
+                });
+            if let Some(cmd) = submit {
+                let out = self.run_console_cmd(&cmd);
+                if !cmd.trim().is_empty() {
+                    self.console_history.push((cmd, out));
+                    if self.console_history.len() > 100 {
+                        self.console_history.remove(0);
+                    }
+                }
+            }
+        }
 
         // Templates popup modal (#745).
         if self.show_templates_popup {
