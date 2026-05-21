@@ -826,8 +826,25 @@ impl eframe::App for App {
                         }
                     });
 
-                    // Per-op output inspector (uses ForwardTrace).
+                    // Per-op contribution bars (visual story: how much
+                    // does each op influence the bundled output?).
                     if let Some(trace) = self.last_trace.clone() {
+                        ui.add_space(theme::SPACE_LG);
+                        section_heading(ui, "Per-op contribution");
+                        ui.add_space(theme::SPACE_SM);
+                        let contributions: Vec<(usize, String, f64)> = trace
+                            .per_op
+                            .iter()
+                            .map(|op_out| {
+                                let s = cos_sim(&op_out.output, &trace.bundled)
+                                    .unwrap_or(0.0);
+                                (op_out.index, op_out.tag.clone(), s)
+                            })
+                            .collect();
+                        card(ui, |ui| {
+                            contribution_bars(ui, &contributions);
+                        });
+
                         ui.add_space(theme::SPACE_LG);
                         section_heading(ui, "Per-op inspector");
                         ui.add_space(theme::SPACE_SM);
@@ -1083,6 +1100,65 @@ fn op_chip_actions(ui: &mut egui::Ui, idx: usize, tag: &str) -> OpChipAction {
             });
         });
     action
+}
+
+/// Horizontal bars showing each op's cos_sim(op_output, bundled).
+/// Shows at a glance which ops dominate the bundled output.
+fn contribution_bars(ui: &mut egui::Ui, entries: &[(usize, String, f64)]) {
+    if entries.is_empty() {
+        ui.label(
+            egui::RichText::new("(no ops)")
+                .color(theme::TEXT_DIM)
+                .size(theme::SIZE_SMALL),
+        );
+        return;
+    }
+    let row_h = 22.0_f32;
+    let max_abs = entries
+        .iter()
+        .map(|(_, _, s)| s.abs())
+        .fold(0.0_f64, f64::max)
+        .max(0.01);
+    let avail_w = ui.available_width();
+    let label_w = 110.0;
+    let value_w = 64.0;
+    let bar_max_w = (avail_w - label_w - value_w - 20.0).max(40.0);
+
+    for (idx, tag, sim) in entries {
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(avail_w, row_h), egui::Sense::hover());
+        let painter = ui.painter_at(rect);
+        // Label.
+        let colour = theme::op_color(tag);
+        painter.text(
+            egui::pos2(rect.min.x + 4.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            format!("[{idx}] {tag}"),
+            egui::FontId::proportional(theme::SIZE_SMALL),
+            colour,
+        );
+        // Bar.
+        let bar_origin_x = rect.min.x + label_w;
+        let bar_w = (sim.abs() / max_abs) as f32 * bar_max_w;
+        let bar_rect = egui::Rect::from_min_size(
+            egui::pos2(bar_origin_x, rect.center().y - 6.0),
+            egui::vec2(bar_w, 12.0),
+        );
+        let bar_colour = if *sim >= 0.0 {
+            colour
+        } else {
+            colour.gamma_multiply(0.5)
+        };
+        painter.rect_filled(bar_rect, 6.0, bar_colour);
+        // Value text.
+        painter.text(
+            egui::pos2(rect.max.x - 4.0, rect.center().y),
+            egui::Align2::RIGHT_CENTER,
+            format!("{sim:+.3}"),
+            egui::FontId::proportional(theme::SIZE_SMALL),
+            theme::TEXT_PRIMARY,
+        );
+    }
 }
 
 /// Clickable variant: returns true if the user clicked the heatmap (to
