@@ -1179,6 +1179,32 @@ impl eframe::App for App {
             if i.key_pressed(egui::Key::H) || i.key_pressed(egui::Key::F1) {
                 self.show_help = !self.show_help;
             }
+            // More shortcuts (#749).
+            if !i.modifiers.command && !i.modifiers.ctrl {
+                if i.key_pressed(egui::Key::A) {
+                    self.add_op("identity");
+                }
+                if i.key_pressed(egui::Key::D) {
+                    self.add_op("dense");
+                }
+                if i.key_pressed(egui::Key::F) {
+                    self.add_op("hrr_bind"); // F = Fft
+                }
+                if i.key_pressed(egui::Key::P) {
+                    self.add_op("permute");
+                }
+                if i.key_pressed(egui::Key::N) {
+                    self.add_op("negate");
+                }
+                if i.key_pressed(egui::Key::Backspace)
+                    && self.selected_op.is_some()
+                {
+                    if let Some(idx) = self.selected_op {
+                        self.remove_op(idx);
+                        self.selected_op = None;
+                    }
+                }
+            }
             if i.key_pressed(egui::Key::Escape) {
                 self.show_help = false;
                 self.zoom_target = None;
@@ -1744,6 +1770,10 @@ impl eframe::App for App {
                     .collect();
                 let mut to_remove: Option<usize> = None;
                 let mut to_reseed: Option<usize> = None;
+                let mut to_duplicate: Option<usize> = None;
+                let mut to_move_up: Option<usize> = None;
+                let mut to_move_down: Option<usize> = None;
+                let mut to_convert: Option<(usize, &'static str)> = None;
                 let mut drag_drop_target: Option<usize> = None;
                 let drag_active = self.drag_source.is_some();
                 for (idx, tag) in &ops {
@@ -1761,6 +1791,18 @@ impl eframe::App for App {
                     }
                     if action.reseed {
                         to_reseed = Some(*idx);
+                    }
+                    if action.duplicate {
+                        to_duplicate = Some(*idx);
+                    }
+                    if action.move_up {
+                        to_move_up = Some(*idx);
+                    }
+                    if action.move_down {
+                        to_move_down = Some(*idx);
+                    }
+                    if let Some(k) = action.convert_to {
+                        to_convert = Some((*idx, k));
                     }
                     if action.start_drag {
                         self.drag_source = Some(*idx);
@@ -1789,6 +1831,48 @@ impl eframe::App for App {
                 }
                 if let Some(i) = to_reseed {
                     self.reseed_op(i);
+                }
+                if let Some(i) = to_duplicate {
+                    if let Some(op) = self.stack.operations().get(i).cloned() {
+                        self.push_undo();
+                        self.stack.insert_operation(i + 1, op);
+                        self.set_status(format!("duplicated op [{i}]"));
+                    }
+                }
+                if let Some(i) = to_move_up {
+                    if i > 0 {
+                        self.push_undo();
+                        self.stack.move_operation(i, i - 1);
+                        self.set_status(format!("moved op [{i}] → [{}]", i - 1));
+                    }
+                }
+                if let Some(i) = to_move_down {
+                    if i + 1 < self.stack.len() {
+                        self.push_undo();
+                        self.stack.move_operation(i, i + 1);
+                        self.set_status(format!("moved op [{i}] → [{}]", i + 1));
+                    }
+                }
+                if let Some((i, new_kind)) = to_convert {
+                    let seed = (i as u64).wrapping_mul(31).wrapping_add(1_000);
+                    let new_op = match new_kind {
+                        "identity" => Operation::Identity,
+                        "dense" => Operation::Dense {
+                            key: Hypervector::random_seeded(self.dim, seed),
+                        },
+                        "hrr_bind" => Operation::HrrBind {
+                            key: Hypervector::random_seeded(self.dim, seed + 100),
+                        },
+                        "permute" => Operation::Permute {
+                            shift: ((seed as usize).wrapping_mul(7) + 13)
+                                % self.dim.max(1),
+                        },
+                        "negate" => Operation::Negate,
+                        _ => Operation::Identity,
+                    };
+                    self.push_undo();
+                    self.stack.replace_operation(i, new_op);
+                    self.set_status(format!("converted op [{i}] → {new_kind}"));
                 }
 
                 ui.add_space(theme::SPACE_SM);
@@ -2803,6 +2887,13 @@ struct OpChipAction {
     reseed: bool,
     start_drag: bool,
     drop_here: bool,
+    /// Replace this op with a different kind.
+    convert_to: Option<&'static str>,
+    /// Duplicate this op directly after itself.
+    duplicate: bool,
+    /// Move up / down in the stack.
+    move_up: bool,
+    move_down: bool,
 }
 
 /// Op chip with drag-and-drop reorder support.
@@ -2892,6 +2983,62 @@ fn op_chip_actions_with_drag(
             egui::Stroke::new(2.0, theme::ACCENT_PURPLE),
         );
     }
+    // Right-click → context menu (#708).
+    row_resp.context_menu(|ui| {
+        ui.set_min_width(180.0);
+        ui.label(
+            egui::RichText::new(format!("Op [{idx}] · {tag}"))
+                .size(theme::SIZE_SMALL)
+                .color(theme::ACCENT_BLUE)
+                .strong(),
+        );
+        ui.separator();
+        if ui.button("⟳  Reseed key").clicked() {
+            action.reseed = true;
+            ui.close_menu();
+        }
+        if ui.button("⎘  Duplicate").clicked() {
+            action.duplicate = true;
+            ui.close_menu();
+        }
+        if ui.button("↑  Move up").clicked() {
+            action.move_up = true;
+            ui.close_menu();
+        }
+        if ui.button("↓  Move down").clicked() {
+            action.move_down = true;
+            ui.close_menu();
+        }
+        ui.separator();
+        ui.label(
+            egui::RichText::new("Convert to:")
+                .size(theme::SIZE_TINY)
+                .color(theme::TEXT_MUTED),
+        );
+        for new_kind in ["identity", "dense", "hrr_bind", "permute", "negate"] {
+            if new_kind == tag {
+                continue;
+            }
+            if ui.button(format!("→  {new_kind}")).clicked() {
+                action.convert_to = Some(new_kind);
+                ui.close_menu();
+            }
+        }
+        ui.separator();
+        if ui
+            .add(
+                egui::Button::new(
+                    egui::RichText::new("×  Remove")
+                        .color(egui::Color32::from_rgb(0xE0, 0x6A, 0x5B)),
+                ),
+            )
+            .clicked()
+        {
+            action.remove = true;
+            ui.close_menu();
+        }
+    });
+
     // Hover → show key preview popup for keyed ops (#712).
     if let Some(key) = key_preview {
         if row_resp.hovered() || resp.hovered() {
