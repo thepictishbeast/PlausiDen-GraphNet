@@ -16,6 +16,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod backend;
 pub mod continuous;
 pub mod history;
 pub mod intervene;
@@ -28,6 +29,7 @@ pub mod stack;
 pub mod trace;
 pub mod yaml_spec;
 
+pub use backend::{pick_backend, Backend, CpuBackend, NativeAdapter};
 pub use continuous::{ContinuousError, ContinuousRunner, ForwardEvent};
 pub use history::{HistoryError, InterventionHistory, DEFAULT_HISTORY_CAPACITY};
 pub use intervene::{apply_intervention, undo, Intervention, InterventionError, UndoToken};
