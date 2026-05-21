@@ -63,6 +63,41 @@ struct App {
     /// Ring buffer of "action" log lines (timestamp + text), shown in the
     /// right-hand panel for interaction feedback.
     action_log: Vec<(std::time::Instant, String)>,
+    /// Which left-panel mode the tool palette has selected.
+    tool_mode: ToolMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToolMode {
+    Templates,
+    Edit,
+    Inspect,
+    Compare,
+    Settings,
+    Help,
+}
+
+impl ToolMode {
+    fn icon(self) -> &'static str {
+        match self {
+            ToolMode::Templates => "📋",
+            ToolMode::Edit => "✏",
+            ToolMode::Inspect => "🔍",
+            ToolMode::Compare => "⇄",
+            ToolMode::Settings => "⚙",
+            ToolMode::Help => "❓",
+        }
+    }
+    fn label(self) -> &'static str {
+        match self {
+            ToolMode::Templates => "Templates",
+            ToolMode::Edit => "Edit stack",
+            ToolMode::Inspect => "Inspect",
+            ToolMode::Compare => "Compare (TBD)",
+            ToolMode::Settings => "Settings",
+            ToolMode::Help => "Help",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -284,6 +319,7 @@ impl App {
             drag_source: None,
             last_forward_at: None,
             action_log: Vec::new(),
+            tool_mode: ToolMode::Templates,
         };
         app.load_template("standard");
         // Try to restore previous session.
@@ -893,6 +929,64 @@ impl eframe::App for App {
             }
         });
 
+        // Blender/FreeCAD-style tool palette: icon-only column on the far
+        // left for mode switching.
+        egui::SidePanel::left("tool_palette")
+            .exact_width(56.0)
+            .resizable(false)
+            .frame(
+                egui::Frame::none()
+                    .fill(theme::BG_CARD)
+                    .inner_margin(egui::Margin::symmetric(theme::SPACE_XS, theme::SPACE_SM)),
+            )
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    let modes = [
+                        ToolMode::Templates,
+                        ToolMode::Edit,
+                        ToolMode::Inspect,
+                        ToolMode::Compare,
+                        ToolMode::Settings,
+                        ToolMode::Help,
+                    ];
+                    for mode in modes {
+                        let active = self.tool_mode == mode;
+                        let resp = ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new(mode.icon())
+                                        .size(22.0)
+                                        .color(if active {
+                                            egui::Color32::WHITE
+                                        } else {
+                                            theme::TEXT_MUTED
+                                        }),
+                                )
+                                .fill(if active {
+                                    theme::ACCENT_MID
+                                } else {
+                                    egui::Color32::TRANSPARENT
+                                })
+                                .stroke(if active {
+                                    egui::Stroke::new(1.0, theme::ACCENT_MID)
+                                } else {
+                                    egui::Stroke::NONE
+                                })
+                                .rounding(egui::Rounding::same(theme::RADIUS_SM))
+                                .min_size(egui::vec2(40.0, 40.0)),
+                            )
+                            .on_hover_text(mode.label());
+                        if resp.clicked() {
+                            self.tool_mode = mode;
+                            if mode == ToolMode::Help {
+                                self.show_help = true;
+                            }
+                        }
+                        ui.add_space(theme::SPACE_XS);
+                    }
+                });
+            });
+
         egui::SidePanel::left("arch")
             .min_width(280.0)
             .max_width(340.0)
@@ -903,6 +997,66 @@ impl eframe::App for App {
                     .inner_margin(egui::Margin::same(theme::SPACE_LG)),
             )
             .show(ctx, |ui| {
+                // Mode-aware left panel content.
+                let mode_label = self.tool_mode.label();
+                ui.label(
+                    egui::RichText::new(mode_label)
+                        .size(theme::SIZE_TINY)
+                        .color(theme::ACCENT_PURPLE)
+                        .strong(),
+                );
+                ui.add_space(theme::SPACE_SM);
+                if self.tool_mode == ToolMode::Settings {
+                    section_heading(ui, "Appearance");
+                    ui.add_space(theme::SPACE_SM);
+                    card(ui, |ui| {
+                        let mode_label = if self.mode == theme::Mode::Dark { "Dark" } else { "Light" };
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("theme")
+                                    .color(theme::TEXT_MUTED)
+                                    .size(theme::SIZE_SMALL),
+                            );
+                            if ui.button(mode_label).clicked() {
+                                self.toggle_mode(ctx);
+                            }
+                        });
+                        ui.checkbox(&mut self.arch_autorotate, "arch graph auto-rotate");
+                        ui.checkbox(&mut self.live, "live continuous mode");
+                    });
+                    ui.add_space(theme::SPACE_MD);
+                    section_heading(ui, "Dim");
+                    ui.add_space(theme::SPACE_XS);
+                    let mut slider_value = self.dim_slider;
+                    let slider_resp = ui.add(
+                        egui::Slider::new(&mut slider_value, 256..=16_384)
+                            .logarithmic(true)
+                            .text("D"),
+                    );
+                    self.dim_slider = slider_value;
+                    if slider_resp.drag_stopped() || slider_resp.lost_focus() {
+                        self.set_dim(self.dim_slider);
+                    }
+                    return;
+                }
+                if self.tool_mode == ToolMode::Compare {
+                    ui.label(
+                        egui::RichText::new(
+                            "A/B compare mode lands in a future iter (#711 in tracker).",
+                        )
+                        .color(theme::TEXT_MUTED)
+                        .size(theme::SIZE_SMALL),
+                    );
+                    return;
+                }
+                if self.tool_mode == ToolMode::Help {
+                    ui.label(
+                        egui::RichText::new("Help overlay is open. Press H or Esc to close.")
+                            .color(theme::TEXT_MUTED)
+                            .size(theme::SIZE_SMALL),
+                    );
+                    return;
+                }
                 section_heading(ui, "Example configs");
                 ui.add_space(theme::SPACE_SM);
                 for (i, template) in TEMPLATES.iter().enumerate() {
