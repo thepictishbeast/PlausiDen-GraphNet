@@ -2,6 +2,7 @@
 members = [
     "crates/graphnet-engine",
     "crates/graphnet-bindings",
+    "crates/graphnet-gui",
 ]
 resolver = "2"
 
