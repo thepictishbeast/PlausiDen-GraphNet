@@ -63,9 +63,9 @@ struct App {
     drag_source: Option<usize>,
     /// Time of the most recent forward — animates particle flow on connectors.
     last_forward_at: Option<std::time::Instant>,
-    /// Ring buffer of "action" log lines (timestamp + text), shown in the
-    /// right-hand panel for interaction feedback.
-    action_log: Vec<(std::time::Instant, String)>,
+    /// Ring buffer of "action" log lines (timestamp + severity + text),
+    /// shown in the right-hand panel for interaction feedback.
+    action_log: Vec<LogEntry>,
     /// Which left-panel mode the tool palette has selected.
     tool_mode: ToolMode,
     /// Undo stack: snapshots of Stack BEFORE each mutating action.
@@ -78,6 +78,40 @@ struct App {
     resource_monitor: ResourceMonitor,
     last_sample: Option<ResourceSample>,
     last_sample_at: std::time::Instant,
+}
+
+#[derive(Debug, Clone)]
+struct LogEntry {
+    at: std::time::Instant,
+    severity: LogSeverity,
+    msg: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LogSeverity {
+    Info,
+    Success,
+    Warn,
+    Error,
+}
+
+impl LogSeverity {
+    fn color(self) -> egui::Color32 {
+        match self {
+            LogSeverity::Info => theme::TEXT_PRIMARY,
+            LogSeverity::Success => egui::Color32::from_rgb(0x4D, 0xC4, 0x82),
+            LogSeverity::Warn => egui::Color32::from_rgb(0xE0, 0xB1, 0x5B),
+            LogSeverity::Error => egui::Color32::from_rgb(0xE0, 0x6A, 0x5B),
+        }
+    }
+    fn glyph(self) -> &'static str {
+        match self {
+            LogSeverity::Info => "ⓘ",
+            LogSeverity::Success => "✓",
+            LogSeverity::Warn => "⚠",
+            LogSeverity::Error => "✕",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -536,7 +570,21 @@ impl App {
     }
 
     fn run_forward(&mut self) {
+        if self.stack.len() == 0 {
+            self.log(
+                LogSeverity::Warn,
+                "forward skipped — stack has zero ops".to_string(),
+            );
+            return;
+        }
         let started = std::time::Instant::now();
+        match self.stack.forward_with_trace(&self.input) {
+            Err(e) => {
+                self.log(LogSeverity::Error, format!("forward error: {e}"));
+                return;
+            }
+            Ok(_) => {}
+        }
         if let Ok(trace) = self.stack.forward_with_trace(&self.input) {
             #[allow(clippy::cast_precision_loss)]
             let ms = started.elapsed().as_micros() as f64 / 1000.0;
@@ -609,19 +657,18 @@ impl App {
             .set_directory(std::env::current_dir().unwrap_or_else(|_| ".".into()))
             .save_file();
         let Some(path) = path else {
-            self.set_status("save cancelled".to_string());
+            self.log(LogSeverity::Warn, "save cancelled".to_string());
             return;
         };
         match stack_to_yaml(&self.stack) {
             Ok(yaml) => match std::fs::write(&path, &yaml) {
-                Ok(_) => self.set_status(format!(
-                    "saved → {} ({} bytes)",
-                    path.display(),
-                    yaml.len()
-                )),
-                Err(e) => self.set_status(format!("save failed: {e}")),
+                Ok(_) => self.log(
+                    LogSeverity::Success,
+                    format!("saved → {} ({} bytes)", path.display(), yaml.len()),
+                ),
+                Err(e) => self.log(LogSeverity::Error, format!("save failed: {e}")),
             },
-            Err(e) => self.set_status(format!("encode failed: {e}")),
+            Err(e) => self.log(LogSeverity::Error, format!("encode failed: {e}")),
         }
         self.persist();
     }
@@ -632,7 +679,7 @@ impl App {
             .set_directory(std::env::current_dir().unwrap_or_else(|_| ".".into()))
             .pick_file();
         let Some(path) = path else {
-            self.set_status("load cancelled".to_string());
+            self.log(LogSeverity::Warn, "load cancelled".to_string());
             return;
         };
         match std::fs::read_to_string(&path) {
@@ -645,18 +692,26 @@ impl App {
                     self.last_trace = None;
                     self.last_latency_ms = None;
                     self.last_cos_sim = None;
-                    self.set_status(format!("loaded ← {}", path.display()));
+                    self.log(LogSeverity::Success, format!("loaded ← {}", path.display()));
                 }
-                Err(e) => self.set_status(format!("decode failed: {e}")),
+                Err(e) => self.log(LogSeverity::Error, format!("decode failed: {e}")),
             },
-            Err(e) => self.set_status(format!("read failed: {e}")),
+            Err(e) => self.log(LogSeverity::Error, format!("read failed: {e}")),
         }
     }
 
     fn set_status(&mut self, msg: String) {
+        self.log(LogSeverity::Info, msg);
+    }
+
+    fn log(&mut self, severity: LogSeverity, msg: String) {
         self.status_msg = Some((msg.clone(), std::time::Instant::now()));
-        self.action_log.push((std::time::Instant::now(), msg));
-        if self.action_log.len() > 64 {
+        self.action_log.push(LogEntry {
+            at: std::time::Instant::now(),
+            severity,
+            msg,
+        });
+        if self.action_log.len() > 128 {
             self.action_log.remove(0);
         }
     }
@@ -1573,13 +1628,14 @@ impl eframe::App for App {
                                 );
                             } else {
                                 let now = std::time::Instant::now();
-                                for (t, msg) in self.action_log.iter().rev().take(10) {
-                                    let age = now.duration_since(*t).as_secs_f32();
-                                    let alpha = (1.0 - (age / 60.0).clamp(0.0, 0.8)).max(0.2);
+                                for entry in self.action_log.iter().rev().take(12) {
+                                    let age = now.duration_since(entry.at).as_secs_f32();
+                                    let alpha = (1.0 - (age / 60.0).clamp(0.0, 0.7)).max(0.3);
+                                    let base = entry.severity.color();
                                     let colour = egui::Color32::from_rgba_unmultiplied(
-                                        theme::TEXT_PRIMARY.r(),
-                                        theme::TEXT_PRIMARY.g(),
-                                        theme::TEXT_PRIMARY.b(),
+                                        base.r(),
+                                        base.g(),
+                                        base.b(),
                                         (alpha * 255.0) as u8,
                                     );
                                     ui.horizontal(|ui| {
@@ -1590,7 +1646,12 @@ impl eframe::App for App {
                                                 .monospace(),
                                         );
                                         ui.label(
-                                            egui::RichText::new(msg)
+                                            egui::RichText::new(entry.severity.glyph())
+                                                .size(theme::SIZE_SMALL)
+                                                .color(base),
+                                        );
+                                        ui.label(
+                                            egui::RichText::new(&entry.msg)
                                                 .size(theme::SIZE_SMALL)
                                                 .color(colour),
                                         );
