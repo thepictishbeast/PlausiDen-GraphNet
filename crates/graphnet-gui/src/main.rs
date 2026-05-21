@@ -1746,13 +1746,13 @@ impl eframe::App for App {
                 ui.horizontal(|ui| {
                     let btn = ui.add(
                         egui::Button::new(
-                            egui::RichText::new("▶  Run forward  (Space)")
+                            egui::RichText::new("▶  Run forward")
                                 .size(theme::SIZE_BODY)
                                 .strong(),
                         )
                         .fill(pulsed_fill)
                         .rounding(egui::Rounding::same(theme::RADIUS_MD))
-                        .min_size(egui::vec2(240.0, 48.0)),
+                        .min_size(egui::vec2(160.0, 40.0)),
                     );
                     if btn.clicked() {
                         self.run_forward();
@@ -1761,11 +1761,7 @@ impl eframe::App for App {
                         ctx.request_repaint();
                     }
 
-                    let live_label = if self.live {
-                        "■ Stop live (L)"
-                    } else {
-                        "● Start live (L)"
-                    };
+                    let live_label = if self.live { "⏹ Stop live" } else { "▶ Live" };
                     let live_color = if self.live {
                         theme::ACCENT_PURPLE
                     } else {
@@ -1781,11 +1777,16 @@ impl eframe::App for App {
                         .fill(live_color)
                         .stroke(egui::Stroke::new(1.0, theme::ACCENT_PURPLE))
                         .rounding(egui::Rounding::same(theme::RADIUS_MD))
-                        .min_size(egui::vec2(180.0, 48.0)),
+                        .min_size(egui::vec2(110.0, 40.0)),
                     );
                     if live_btn.clicked() {
                         self.live = !self.live;
                     }
+                    ui.label(
+                        egui::RichText::new("  (Space / L)")
+                            .size(theme::SIZE_SMALL)
+                            .color(theme::TEXT_MUTED),
+                    );
                 });
 
                 ui.add_space(theme::SPACE_LG);
@@ -2870,8 +2871,9 @@ fn sparkline(ui: &mut egui::Ui, values: impl Iterator<Item = f64>, height: f32) 
 fn main() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1100.0, 720.0])
-            .with_min_inner_size([800.0, 540.0])
+            .with_inner_size([1400.0, 900.0])
+            .with_min_inner_size([960.0, 600.0])
+            .with_maximized(true)
             .with_title("GraphNet"),
         ..Default::default()
     };
