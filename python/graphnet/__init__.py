@@ -15,6 +15,8 @@ __version__ = "0.1.0"
 try:
     from graphnet._graphnet_native import (  # type: ignore[import-not-found]
         banner as _native_banner,
+    )
+    from graphnet._graphnet_native import (
         version as _native_version,
     )
 
