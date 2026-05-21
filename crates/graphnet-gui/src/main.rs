@@ -117,8 +117,9 @@ const WALKTHROUGH_STEPS: &[(&str, &str)] = &[
     ),
     (
         "7. Help is always there",
-        "Press H or F1 anytime to see the full shortcuts list. Press Esc to \
-         close any modal. That's the tour — press → one more time to dismiss.",
+        "Press H or F1 anytime to see the full shortcuts list AND a list of \
+         experiment recipes to try. Drag-and-drop a .yaml file onto the window \
+         to load it. Press Esc to close any modal.",
     ),
 ];
 
@@ -646,6 +647,33 @@ impl eframe::App for App {
                 self.walkthrough_step = Some(next);
             }
         }
+        // Drag-and-drop YAML load.
+        let dropped: Vec<std::path::PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .filter_map(|f| f.path.clone())
+                .collect()
+        });
+        for path in dropped {
+            match std::fs::read_to_string(&path) {
+                Ok(yaml) => match stack_from_yaml(&yaml) {
+                    Ok(stack) => {
+                        self.dim = stack.dim();
+                        self.stack = stack;
+                        self.input = Hypervector::random_seeded(self.dim, self.input_seed);
+                        self.last_output = None;
+                        self.last_trace = None;
+                        self.last_latency_ms = None;
+                        self.last_cos_sim = None;
+                        self.set_status(format!("dropped ← {}", path.display()));
+                    }
+                    Err(e) => self.set_status(format!("dropped file: decode failed: {e}")),
+                },
+                Err(e) => self.set_status(format!("dropped file: read failed: {e}")),
+            }
+        }
+
         // Demo tick.
         if self.demo.is_some() {
             self.tick_demo();
@@ -903,10 +931,10 @@ impl eframe::App for App {
 
                 ui.add_space(theme::SPACE_MD);
                 ui.horizontal(|ui| {
-                    if mini_button(ui, "Save YAML", theme::ACCENT_MID).clicked() {
+                    if mini_button(ui, "💾  Save", theme::ACCENT_MID).clicked() {
                         self.save_yaml();
                     }
-                    if mini_button(ui, "Load YAML", theme::ACCENT_BLUE).clicked() {
+                    if mini_button(ui, "📂  Load", theme::ACCENT_BLUE).clicked() {
                         self.load_yaml();
                     }
                 });
@@ -1007,27 +1035,27 @@ impl eframe::App for App {
 
                 ui.add_space(theme::SPACE_SM);
                 ui.horizontal(|ui| {
-                    if mini_button(ui, "+ Id", theme::op_color("identity")).clicked() {
+                    if mini_button(ui, "➕ Id", theme::op_color("identity")).clicked() {
                         self.add_op("identity");
                     }
-                    if mini_button(ui, "+ Dense", theme::op_color("dense")).clicked() {
+                    if mini_button(ui, "➕ Dense", theme::op_color("dense")).clicked() {
                         self.add_op("dense");
                     }
-                    if mini_button(ui, "+ Hrr", theme::op_color("hrr_bind")).clicked() {
+                    if mini_button(ui, "➕ Hrr", theme::op_color("hrr_bind")).clicked() {
                         self.add_op("hrr_bind");
                     }
                 });
                 ui.add_space(theme::SPACE_XS);
                 ui.horizontal(|ui| {
-                    if mini_button(ui, "+ Permute", theme::op_color("permute")).clicked() {
+                    if mini_button(ui, "➕ Permute", theme::op_color("permute")).clicked() {
                         self.add_op("permute");
                     }
-                    if mini_button(ui, "+ Negate", theme::op_color("negate")).clicked() {
+                    if mini_button(ui, "➕ Negate", theme::op_color("negate")).clicked() {
                         self.add_op("negate");
                     }
                 });
                 ui.add_space(theme::SPACE_SM);
-                if mini_button(ui, "✕ Reset stack", theme::TEXT_MUTED).clicked() {
+                if mini_button(ui, "🗑  Reset stack", theme::TEXT_MUTED).clicked() {
                     self.reset_stack();
                 }
             });
@@ -1245,7 +1273,7 @@ impl eframe::App for App {
                 });
                 ui.add_space(theme::SPACE_SM);
                 ui.horizontal(|ui| {
-                    if mini_button(ui, "regenerate (R)", theme::TEXT_MUTED).clicked() {
+                    if mini_button(ui, "🎲  regenerate (R)", theme::TEXT_MUTED).clicked() {
                         self.regenerate_input();
                     }
                 });
