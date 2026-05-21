@@ -56,6 +56,8 @@ struct App {
     arch_autorotate: bool,
     /// Op index currently being dragged in the sidebar (for reorder).
     drag_source: Option<usize>,
+    /// Time of the most recent forward — animates particle flow on connectors.
+    last_forward_at: Option<std::time::Instant>,
 }
 
 #[derive(Debug, Clone)]
@@ -273,6 +275,7 @@ impl App {
             arch_yaw: 0.6,
             arch_autorotate: false,
             drag_source: None,
+            last_forward_at: None,
         };
         app.load_template("standard");
         // Try to restore previous session.
@@ -1266,9 +1269,30 @@ impl eframe::App for App {
                 let mut yaw = self.arch_yaw;
                 let selected = self.selected_op;
                 let mut graph_click: Option<usize> = None;
+                // Particle phase: rolling 0..1 driven by elapsed time since
+                // last forward. Particles travel for ~0.8s after each fwd.
+                let particle_phase = self
+                    .last_forward_at
+                    .map(|t| {
+                        let elapsed = t.elapsed().as_secs_f32();
+                        if elapsed < 0.8 {
+                            Some(elapsed / 0.8)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(None);
+                if particle_phase.is_some() {
+                    ctx.request_repaint();
+                }
                 card(ui, |ui| {
-                    let (clicked, new_yaw) =
-                        architecture_graph_3d(ui, &op_tags, selected, yaw);
+                    let (clicked, new_yaw) = architecture_graph_3d(
+                        ui,
+                        &op_tags,
+                        selected,
+                        yaw,
+                        particle_phase,
+                    );
                     if let Some(idx) = clicked {
                         graph_click = Some(idx);
                     }
@@ -1892,6 +1916,7 @@ fn architecture_graph_3d(
     op_tags: &[String],
     selected: Option<usize>,
     yaw_in: f32,
+    particle_phase: Option<f32>,
 ) -> (Option<usize>, f32) {
     let n_ops = op_tags.len();
     let height = 280.0_f32;
@@ -1973,11 +1998,43 @@ fn architecture_graph_3d(
         // op → BUNDLE
         painter.line_segment([*op_pos, p_bundle], egui::Stroke::new(stroke_w, colour));
         let _ = op_d;
+
+        // Particle animation: a glowing dot travels along the path.
+        if let Some(phase) = particle_phase {
+            let op_colour = theme::op_color(&op_tags[i]);
+            // Phase 0..0.5 → in→op; 0.5..1.0 → op→bundle.
+            let (from, to, sub_phase) = if phase < 0.5 {
+                (p_in, *op_pos, phase * 2.0)
+            } else {
+                (*op_pos, p_bundle, (phase - 0.5) * 2.0)
+            };
+            let particle_pos = egui::pos2(
+                from.x + (to.x - from.x) * sub_phase,
+                from.y + (to.y - from.y) * sub_phase,
+            );
+            // Glow halo.
+            painter.circle_filled(particle_pos, 7.0, op_colour.gamma_multiply(0.3));
+            painter.circle_filled(particle_pos, 4.5, op_colour);
+            painter.circle_filled(particle_pos, 2.0, egui::Color32::WHITE);
+        }
     }
     painter.line_segment(
         [p_bundle, p_out],
         egui::Stroke::new(1.5, theme::TEXT_MUTED),
     );
+    // Particle from bundle to output for the second half of the animation.
+    if let Some(phase) = particle_phase {
+        if phase > 0.5 {
+            let sub_phase = (phase - 0.5) * 2.0;
+            let particle_pos = egui::pos2(
+                p_bundle.x + (p_out.x - p_bundle.x) * sub_phase,
+                p_bundle.y + (p_out.y - p_bundle.y) * sub_phase,
+            );
+            painter.circle_filled(particle_pos, 7.0, theme::ACCENT_PURPLE.gamma_multiply(0.3));
+            painter.circle_filled(particle_pos, 4.5, theme::ACCENT_PURPLE);
+            painter.circle_filled(particle_pos, 2.0, egui::Color32::WHITE);
+        }
+    }
 
     // Sort all nodes back-to-front by depth (greater depth = further away,
     // drawn first).
@@ -1995,62 +2052,33 @@ fn architecture_graph_3d(
         match kind {
             Node::Input => {
                 let r = 24.0 * size_mul;
-                painter.circle_filled(*pos, r, theme::ACCENT_BLUE);
-                painter.text(
-                    *pos,
-                    egui::Align2::CENTER_CENTER,
-                    "INPUT",
-                    egui::FontId::proportional(theme::SIZE_TINY * size_mul),
-                    egui::Color32::WHITE,
-                );
+                shaded_node(&painter, *pos, r, theme::ACCENT_BLUE, "INPUT", size_mul);
             }
             Node::Bundle => {
                 let r = 24.0 * size_mul;
-                painter.circle_filled(*pos, r, theme::ACCENT_PURPLE);
-                painter.text(
-                    *pos,
-                    egui::Align2::CENTER_CENTER,
-                    "BUNDLE",
-                    egui::FontId::proportional(theme::SIZE_TINY * size_mul),
-                    egui::Color32::WHITE,
-                );
+                shaded_node(&painter, *pos, r, theme::ACCENT_PURPLE, "BUNDLE", size_mul);
             }
             Node::Output => {
                 let r = 24.0 * size_mul;
-                painter.circle_filled(*pos, r, theme::ACCENT_MID);
-                painter.text(
-                    *pos,
-                    egui::Align2::CENTER_CENTER,
-                    "OUT",
-                    egui::FontId::proportional(theme::SIZE_TINY * size_mul),
-                    egui::Color32::WHITE,
-                );
+                shaded_node(&painter, *pos, r, theme::ACCENT_MID, "OUT", size_mul);
             }
             Node::Op(i, tag) => {
                 let colour = theme::op_color(tag);
                 let is_selected = selected == Some(*i);
                 let r = 22.0 * size_mul;
-                let fill = if is_selected {
-                    colour
+                if is_selected {
+                    // Selected: solid colour with subtle outer glow.
+                    painter.circle_filled(*pos, r + 4.0, colour.gamma_multiply(0.25));
+                    shaded_node(&painter, *pos, r, colour, &format!("[{i}]\n{tag}"), size_mul);
                 } else {
-                    colour.gamma_multiply(0.4)
-                };
-                painter.circle_filled(*pos, r, fill);
+                    // Dim: radial-gradient on dimmed colour.
+                    let dim_col = colour.gamma_multiply(0.7);
+                    shaded_node(&painter, *pos, r, dim_col, &format!("[{i}]\n{tag}"), size_mul);
+                }
                 painter.circle_stroke(
                     *pos,
                     r,
                     egui::Stroke::new(if is_selected { 2.0 } else { 1.0 }, colour),
-                );
-                painter.text(
-                    *pos,
-                    egui::Align2::CENTER_CENTER,
-                    format!("[{i}]\n{tag}"),
-                    egui::FontId::proportional(theme::SIZE_TINY * size_mul),
-                    if is_selected {
-                        egui::Color32::WHITE
-                    } else {
-                        colour
-                    },
                 );
 
                 if let Some(cp) = click_pos {
@@ -2074,6 +2102,43 @@ fn architecture_graph_3d(
     );
 
     (clicked, yaw)
+}
+
+/// Paint a node with a fake radial gradient (3D-sphere illusion).
+/// Outer disc is darker; inner discs are progressively brighter and
+/// offset up-left to suggest a light source at upper-left.
+fn shaded_node(
+    painter: &egui::Painter,
+    pos: egui::Pos2,
+    r: f32,
+    colour: egui::Color32,
+    text: &str,
+    size_mul: f32,
+) {
+    // Outer (rim, darker).
+    painter.circle_filled(pos, r, colour.gamma_multiply(0.7));
+    // Mid (base colour).
+    painter.circle_filled(pos, r * 0.85, colour);
+    // Highlight 1.
+    painter.circle_filled(
+        egui::pos2(pos.x - r * 0.2, pos.y - r * 0.2),
+        r * 0.55,
+        colour.gamma_multiply(1.25),
+    );
+    // Highlight 2 (small bright spot).
+    painter.circle_filled(
+        egui::pos2(pos.x - r * 0.35, pos.y - r * 0.35),
+        r * 0.18,
+        egui::Color32::from_white_alpha(180),
+    );
+    // Label.
+    painter.text(
+        pos,
+        egui::Align2::CENTER_CENTER,
+        text,
+        egui::FontId::proportional(theme::SIZE_TINY * size_mul),
+        egui::Color32::WHITE,
+    );
 }
 
 /// 2D flow graph (kept for fallback / unit tests).
