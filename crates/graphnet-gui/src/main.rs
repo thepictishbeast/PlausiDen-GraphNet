@@ -2553,7 +2553,11 @@ impl eframe::App for App {
                         ui.add_space(theme::SPACE_XS);
                         let demo_active = self.demo.is_some();
                         let demo_lbl = if demo_active { " ⏹ Stop demo " } else { " ▶ Demo " };
-                        if hero_btn(ui, demo_lbl, demo_active).clicked() {
+                        let demo_resp = hero_btn(ui, demo_lbl, demo_active).on_hover_text(
+                            "Cycles through all 10 templates with 3 forwards per step.\n\
+                             While running: ⏮ skip back · ⏯ pause · ⏭ skip forward",
+                        );
+                        if demo_resp.clicked() {
                             if demo_active {
                                 self.stop_demo();
                             } else {
