@@ -8204,6 +8204,68 @@ fn architecture_graph_3d(
         }
     }
 
+    // Contribution-magnitude colorbar legend (image 5 inspired —
+    // scientific-scatter colorbar at viewport edge). Only drawn when
+    // contributions data exists.
+    if contributions.is_some() {
+        let bar_w = 100.0;
+        let bar_h = 8.0;
+        let bar_origin = egui::pos2(
+            rect.min.x + 12.0,
+            rect.max.y - 28.0,
+        );
+        // Gradient from muted gray (low contrib) → accent blue (high).
+        let n_steps = 30;
+        for s in 0..n_steps {
+            let t = s as f32 / n_steps as f32;
+            let c = egui::Color32::from_rgb(
+                (theme::TEXT_MUTED.r() as f32 * (1.0 - t)
+                    + theme::ACCENT_BLUE.r() as f32 * t) as u8,
+                (theme::TEXT_MUTED.g() as f32 * (1.0 - t)
+                    + theme::ACCENT_BLUE.g() as f32 * t) as u8,
+                (theme::TEXT_MUTED.b() as f32 * (1.0 - t)
+                    + theme::ACCENT_BLUE.b() as f32 * t) as u8,
+            );
+            painter.rect_filled(
+                egui::Rect::from_min_size(
+                    egui::pos2(
+                        bar_origin.x + t * bar_w,
+                        bar_origin.y,
+                    ),
+                    egui::vec2(bar_w / n_steps as f32 + 0.5, bar_h),
+                ),
+                0.0,
+                c,
+            );
+        }
+        painter.rect_stroke(
+            egui::Rect::from_min_size(bar_origin, egui::vec2(bar_w, bar_h)),
+            0.0,
+            egui::Stroke::new(0.6, theme::TEXT_DIM),
+        );
+        painter.text(
+            egui::pos2(bar_origin.x, bar_origin.y - 2.0),
+            egui::Align2::LEFT_BOTTOM,
+            "|cos_sim(op, bundle)|",
+            egui::FontId::proportional(9.0),
+            theme::TEXT_DIM,
+        );
+        painter.text(
+            egui::pos2(bar_origin.x, bar_origin.y + bar_h + 2.0),
+            egui::Align2::LEFT_TOP,
+            "0.0",
+            egui::FontId::proportional(8.5),
+            theme::TEXT_MUTED,
+        );
+        painter.text(
+            egui::pos2(bar_origin.x + bar_w, bar_origin.y + bar_h + 2.0),
+            egui::Align2::RIGHT_TOP,
+            "1.0",
+            egui::FontId::proportional(8.5),
+            theme::TEXT_MUTED,
+        );
+    }
+
     // Hint text — updated for new shortcuts.
     painter.text(
         egui::pos2(rect.min.x + 6.0, rect.max.y - 6.0),
