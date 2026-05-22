@@ -2669,21 +2669,52 @@ impl eframe::App for App {
             }
             // Arrow-key navigation through ops in the 3D graph.
             // ← previous op, → next op, ↑/↓ also work.
-            if !i.modifiers.shift && !i.modifiers.command && !i.modifiers.ctrl {
+            // Shift+← / Shift+→ MOVES the selected op left/right in the stack.
+            if !i.modifiers.command && !i.modifiers.ctrl {
                 let n = self.stack.len();
                 if n > 0 {
                     let cur = self.selected_op.unwrap_or(0);
-                    if i.key_pressed(egui::Key::ArrowLeft) || i.key_pressed(egui::Key::ArrowUp) {
-                        let prev = if cur == 0 { n - 1 } else { cur - 1 };
-                        self.selected_op = Some(prev);
-                        self.last_node_click_at = Some(std::time::Instant::now());
-                        self.last_node_clicked = Some(prev);
+                    if i.modifiers.shift {
+                        if i.key_pressed(egui::Key::ArrowLeft) && cur > 0 {
+                            self.push_undo();
+                            self.stack.move_operation(cur, cur - 1);
+                            self.selected_op = Some(cur - 1);
+                            self.dirty();
+                        }
+                        if i.key_pressed(egui::Key::ArrowRight) && cur + 1 < n {
+                            self.push_undo();
+                            self.stack.move_operation(cur, cur + 1);
+                            self.selected_op = Some(cur + 1);
+                            self.dirty();
+                        }
+                    } else {
+                        if i.key_pressed(egui::Key::ArrowLeft)
+                            || i.key_pressed(egui::Key::ArrowUp)
+                        {
+                            let prev = if cur == 0 { n - 1 } else { cur - 1 };
+                            self.selected_op = Some(prev);
+                            self.last_node_click_at = Some(std::time::Instant::now());
+                            self.last_node_clicked = Some(prev);
+                        }
+                        if i.key_pressed(egui::Key::ArrowRight)
+                            || i.key_pressed(egui::Key::ArrowDown)
+                        {
+                            let next = (cur + 1) % n;
+                            self.selected_op = Some(next);
+                            self.last_node_click_at = Some(std::time::Instant::now());
+                            self.last_node_clicked = Some(next);
+                        }
                     }
-                    if i.key_pressed(egui::Key::ArrowRight) || i.key_pressed(egui::Key::ArrowDown) {
-                        let next = (cur + 1) % n;
-                        self.selected_op = Some(next);
+                    // Home/End: jump to first/last op.
+                    if i.key_pressed(egui::Key::Home) {
+                        self.selected_op = Some(0);
                         self.last_node_click_at = Some(std::time::Instant::now());
-                        self.last_node_clicked = Some(next);
+                        self.last_node_clicked = Some(0);
+                    }
+                    if i.key_pressed(egui::Key::End) {
+                        self.selected_op = Some(n - 1);
+                        self.last_node_click_at = Some(std::time::Instant::now());
+                        self.last_node_clicked = Some(n - 1);
                     }
                 }
             }
@@ -2916,6 +2947,43 @@ impl eframe::App for App {
                         ui.separator();
                         ui.checkbox(&mut self.arch_autorotate, "Auto-rotate 3D");
                         ui.checkbox(&mut self.live, "Live mode  L");
+                        ui.separator();
+                        ui.label(
+                            egui::RichText::new("Camera preset")
+                                .color(theme::TEXT_MUTED)
+                                .size(theme::SIZE_TINY),
+                        );
+                        if ui.button("🎥 Iso (default)").clicked() {
+                            self.arch_yaw = 0.6;
+                            self.arch_pitch = 0.15;
+                            self.arch_roll = 0.0;
+                            self.arch_zoom = 1.0;
+                            ui.close_menu();
+                        }
+                        if ui.button("🎥 Front (Y up)").clicked() {
+                            self.arch_yaw = 0.0;
+                            self.arch_pitch = 0.0;
+                            self.arch_roll = 0.0;
+                            ui.close_menu();
+                        }
+                        if ui.button("🎥 Top (looking down Y)").clicked() {
+                            self.arch_yaw = 0.0;
+                            self.arch_pitch = 1.4;
+                            self.arch_roll = 0.0;
+                            ui.close_menu();
+                        }
+                        if ui.button("🎥 Right (X-side)").clicked() {
+                            self.arch_yaw = 1.57;
+                            self.arch_pitch = 0.0;
+                            self.arch_roll = 0.0;
+                            ui.close_menu();
+                        }
+                        if ui.button("🔍 Zoom to fit").clicked() {
+                            self.arch_zoom = 1.0;
+                            self.arch_yaw = 0.6;
+                            self.arch_pitch = 0.15;
+                            ui.close_menu();
+                        }
                     });
                     ui.menu_button("Tools", |ui| {
                         ui.label(
