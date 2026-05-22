@@ -25,6 +25,13 @@ fn persistent_state_path() -> std::path::PathBuf {
     base.join("graphnet").join("state.yaml")
 }
 
+fn persistent_settings_path() -> std::path::PathBuf {
+    persistent_state_path()
+        .parent()
+        .map(|p| p.join("settings.yaml"))
+        .unwrap_or_else(|| std::path::PathBuf::from("graphnet-settings.yaml"))
+}
+
 struct App {
     stack: Stack,
     input_seed: u64,
@@ -699,6 +706,7 @@ impl App {
         app.load_template("standard");
         // Try to restore previous session.
         let _ = app.restore();
+        app.restore_settings();
         // Run an initial forward so the user sees an output IMMEDIATELY
         // — addresses "i can't tell if anything's working" at startup.
         app.run_forward();
@@ -1390,6 +1398,61 @@ impl App {
         }
         if let Ok(yaml) = stack_to_yaml(&self.stack) {
             let _ = std::fs::write(&path, yaml);
+        }
+        // Also persist user-prefs settings (#87).
+        let prefs = format!(
+            "colormap: {}\ntheme_dark: {}\nfont_scale: {}\nworkspace: {}\n",
+            match self.colormap {
+                Colormap::Bipolar => "bipolar",
+                Colormap::Viridis => "viridis",
+                Colormap::Plasma => "plasma",
+                Colormap::Mono => "mono",
+            },
+            self.mode == theme::Mode::Dark,
+            self.font_scale,
+            match self.workspace {
+                Workspace::Edit => "edit",
+                Workspace::Live => "live",
+                Workspace::Compare => "compare",
+                Workspace::Train => "train",
+            }
+        );
+        let settings_path = persistent_settings_path();
+        let _ = std::fs::write(&settings_path, prefs);
+    }
+
+    fn restore_settings(&mut self) {
+        let Ok(contents) = std::fs::read_to_string(persistent_settings_path()) else {
+            return;
+        };
+        for line in contents.lines() {
+            if let Some((k, v)) = line.split_once(':') {
+                let v = v.trim();
+                match k.trim() {
+                    "colormap" => {
+                        self.colormap = match v {
+                            "viridis" => Colormap::Viridis,
+                            "plasma" => Colormap::Plasma,
+                            "mono" => Colormap::Mono,
+                            _ => Colormap::Bipolar,
+                        };
+                    }
+                    "font_scale" => {
+                        if let Ok(s) = v.parse() {
+                            self.font_scale = s;
+                        }
+                    }
+                    "workspace" => {
+                        self.workspace = match v {
+                            "live" => Workspace::Live,
+                            "compare" => Workspace::Compare,
+                            "train" => Workspace::Train,
+                            _ => Workspace::Edit,
+                        };
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 
