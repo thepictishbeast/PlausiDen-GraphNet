@@ -5384,7 +5384,7 @@ impl eframe::App for App {
                 let mut yaw = self.arch_yaw;
                 let mut pitch = self.arch_pitch;
                 let selected = self.selected_op;
-                let mut graph_click: Option<usize> = None;
+                let mut graph_click: Option<ArchClick> = None;
                 // Particle phase: rolling 0..1 driven by elapsed time since
                 // last forward. Particles travel for ~0.8s after each fwd.
                 let particle_phase = self
@@ -5439,8 +5439,8 @@ impl eframe::App for App {
                             contrib_slice,
                             click_flash,
                         );
-                    if let Some(idx) = clicked {
-                        graph_click = Some(idx);
+                    if let Some(click) = clicked {
+                        graph_click = Some(click);
                     }
                     yaw = new_yaw;
                     pitch = new_pitch;
@@ -5597,15 +5597,40 @@ impl eframe::App for App {
                         }
                     }
                 }
-                if let Some(idx) = graph_click {
-                    self.selected_op = if self.selected_op == Some(idx) {
-                        None
-                    } else {
-                        Some(idx)
-                    };
-                    self.last_node_click_at = Some(std::time::Instant::now());
-                    self.last_node_clicked = Some(idx);
-                    ctx.request_repaint();
+                if let Some(click) = graph_click {
+                    match click {
+                        ArchClick::Op(idx) => {
+                            self.selected_op = if self.selected_op == Some(idx) {
+                                None
+                            } else {
+                                Some(idx)
+                            };
+                            self.last_node_click_at = Some(std::time::Instant::now());
+                            self.last_node_clicked = Some(idx);
+                            ctx.request_repaint();
+                        }
+                        ArchClick::Input => {
+                            self.zoom_target = Some(ZoomTarget::Input);
+                            self.log(
+                                LogSeverity::Info,
+                                "3D: opened INPUT zoom modal".to_string(),
+                            );
+                        }
+                        ArchClick::Bundle | ArchClick::Output => {
+                            if self.last_output.is_some() {
+                                self.zoom_target = Some(ZoomTarget::Output);
+                                self.log(
+                                    LogSeverity::Info,
+                                    "3D: opened OUTPUT zoom modal".to_string(),
+                                );
+                            } else {
+                                self.log(
+                                    LogSeverity::Warn,
+                                    "3D: no output yet — press Space to run forward".to_string(),
+                                );
+                            }
+                        }
+                    }
                 }
 
                 // (cos_sim / latency sparklines moved to the right panel.)
@@ -6480,6 +6505,14 @@ enum ArchToolAction {
     ZoomOut,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ArchClick {
+    Op(usize),
+    Input,
+    Bundle,
+    Output,
+}
+
 fn architecture_graph_3d(
     ui: &mut egui::Ui,
     op_tags: &[String],
@@ -6492,7 +6525,7 @@ fn architecture_graph_3d(
     particle_phase: Option<f32>,
     contributions: Option<&[f64]>,
     click_flash: Option<(usize, f32)>,
-) -> (Option<usize>, f32, f32, f32, Option<ArchToolAction>) {
+) -> (Option<ArchClick>, f32, f32, f32, Option<ArchToolAction>) {
     let n_ops = op_tags.len();
     let height = 360.0_f32;
     let width = ui.available_width();
@@ -6691,7 +6724,7 @@ fn architecture_graph_3d(
     // drawn first).
     nodes.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
 
-    let mut clicked: Option<usize> = None;
+    let mut clicked: Option<ArchClick> = None;
     let click_pos = if response.clicked() {
         response.interact_pointer_pos()
     } else {
@@ -6714,14 +6747,17 @@ fn architecture_graph_3d(
             Node::Input => {
                 let r = 24.0 * size_mul;
                 shaded_node(&painter, *pos, r, theme::ACCENT_BLUE, "INPUT", size_mul);
+                arch_hit_test(*pos, r, click_pos, _right_click_pos, hover_pos, &painter, ArchClick::Input, &mut clicked);
             }
             Node::Bundle => {
                 let r = 24.0 * size_mul;
                 shaded_node(&painter, *pos, r, theme::ACCENT_PURPLE, "BUNDLE", size_mul);
+                arch_hit_test(*pos, r, click_pos, _right_click_pos, hover_pos, &painter, ArchClick::Bundle, &mut clicked);
             }
             Node::Output => {
                 let r = 24.0 * size_mul;
                 shaded_node(&painter, *pos, r, theme::ACCENT_MID, "OUT", size_mul);
+                arch_hit_test(*pos, r, click_pos, _right_click_pos, hover_pos, &painter, ArchClick::Output, &mut clicked);
             }
             Node::Op(i, tag) => {
                 let colour = theme::op_color(tag);
@@ -6815,7 +6851,7 @@ fn architecture_graph_3d(
                     let dx = cp.x - pos.x;
                     let dy = cp.y - pos.y;
                     if (dx * dx + dy * dy).sqrt() <= r + 4.0 {
-                        clicked = Some(*i);
+                        clicked = Some(ArchClick::Op(*i));
                     }
                 }
                 // Right-click on a 3D node → set as selected, then the
@@ -6824,7 +6860,7 @@ fn architecture_graph_3d(
                     let dx = rcp.x - pos.x;
                     let dy = rcp.y - pos.y;
                     if (dx * dx + dy * dy).sqrt() <= r + 4.0 {
-                        clicked = Some(*i);
+                        clicked = Some(ArchClick::Op(*i));
                     }
                 }
                 // Hover state — bright ring + tooltip.
@@ -6940,6 +6976,46 @@ fn architecture_graph_3d(
     }
 
     (clicked, yaw, pitch, roll, tool_action)
+}
+
+/// Shared hit-test helper for INPUT/BUNDLE/OUTPUT non-op 3D nodes.
+/// Sets `*clicked` to `kind` on left- or right-click hit; paints a
+/// white hover ring on hover.
+#[allow(clippy::too_many_arguments)]
+fn arch_hit_test(
+    pos: egui::Pos2,
+    r: f32,
+    click_pos: Option<egui::Pos2>,
+    right_click_pos: Option<egui::Pos2>,
+    hover_pos: Option<egui::Pos2>,
+    painter: &egui::Painter,
+    kind: ArchClick,
+    clicked: &mut Option<ArchClick>,
+) {
+    let inside = |p: egui::Pos2| -> bool {
+        let dx = p.x - pos.x;
+        let dy = p.y - pos.y;
+        (dx * dx + dy * dy).sqrt() <= r + 4.0
+    };
+    if let Some(cp) = click_pos {
+        if inside(cp) {
+            *clicked = Some(kind);
+        }
+    }
+    if let Some(rcp) = right_click_pos {
+        if inside(rcp) {
+            *clicked = Some(kind);
+        }
+    }
+    if let Some(hp) = hover_pos {
+        if inside(hp) {
+            painter.circle_stroke(
+                pos,
+                r + 3.0,
+                egui::Stroke::new(1.5, egui::Color32::from_white_alpha(180)),
+            );
+        }
+    }
 }
 
 /// Draw a small symbolic glyph for an op kind. Reinforces the "creature
