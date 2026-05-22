@@ -4995,11 +4995,34 @@ impl eframe::App for App {
 
                     // (Per-op contribution + inspector moved to the right panel.)
                 } else {
-                    ui.label(
-                        egui::RichText::new("(click ‘Run forward’ or press Space)")
-                            .color(theme::TEXT_DIM)
-                            .italics(),
-                    );
+                    // Helpful empty-output card: differentiate "no run yet"
+                    // from "no ops to run".
+                    if self.stack.len() == 0 {
+                        card(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new("⚠ Stack is empty")
+                                    .size(theme::SIZE_BODY)
+                                    .color(theme::ACCENT_PURPLE)
+                                    .strong(),
+                            );
+                            ui.label(
+                                egui::RichText::new(
+                                    "Add ops before running a forward:\n\
+                                     · keyboard: A=identity, D=dense, F=hrr_bind, P=permute, N=negate\n\
+                                     · or press 1-9/0 for a template\n\
+                                     · or click an op chip in the ➕ Add op palette below",
+                                )
+                                .size(theme::SIZE_SMALL)
+                                .color(theme::TEXT_PRIMARY),
+                            );
+                        });
+                    } else {
+                        ui.label(
+                            egui::RichText::new("(click ‘Run forward’ or press Space)")
+                                .color(theme::TEXT_DIM)
+                                .italics(),
+                        );
+                    }
                 }
                 if let Some(z) = zoom_request {
                     self.zoom_target = Some(z);
