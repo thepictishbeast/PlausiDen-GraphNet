@@ -147,6 +147,12 @@ struct App {
     show_floating_stats: bool,
     /// Show the floating mini-help window? (#741)
     show_floating_minihelp: bool,
+    /// Show the architecture inspector window (#773) — lists factory
+    /// NeuralGraphs (GPT-2, ResNet, transformer block, etc.) with layer
+    /// counts + param estimates. Toggle from View menu.
+    show_arch_inspector: bool,
+    /// Which factory architecture is currently selected in the inspector.
+    arch_inspector_selection: ArchInspectorChoice,
     /// Training pipeline state (#757).
     train: TrainState,
     /// Loaded image path (for status display) (#758).
@@ -217,6 +223,34 @@ struct AudioState {
     /// Stub for now — real rodio output requires libasound2-dev on Linux.
     /// When available, hold OutputStream + OutputStreamHandle here.
     _placeholder: (),
+}
+
+/// Factory choices for the architecture inspector (#773 Phase 1.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ArchInspectorChoice {
+    Gpt2Small,
+    TransformerBlock,
+    ResnetBasicBlock,
+    CurrentHdcStack,
+}
+
+impl ArchInspectorChoice {
+    fn all() -> &'static [ArchInspectorChoice] {
+        &[
+            ArchInspectorChoice::Gpt2Small,
+            ArchInspectorChoice::TransformerBlock,
+            ArchInspectorChoice::ResnetBasicBlock,
+            ArchInspectorChoice::CurrentHdcStack,
+        ]
+    }
+    fn label(self) -> &'static str {
+        match self {
+            ArchInspectorChoice::Gpt2Small => "GPT-2-small",
+            ArchInspectorChoice::TransformerBlock => "Transformer block",
+            ArchInspectorChoice::ResnetBasicBlock => "ResNet-18 basic block",
+            ArchInspectorChoice::CurrentHdcStack => "Current HDC stack",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -718,6 +752,8 @@ impl App {
             show_right_panel: true,
             show_floating_stats: false,
             show_floating_minihelp: false,
+            show_arch_inspector: false,
+            arch_inspector_selection: ArchInspectorChoice::Gpt2Small,
             train: TrainState::default(),
             loaded_image: None,
             last_node_click_at: None,
@@ -2440,6 +2476,7 @@ impl eframe::App for App {
                         ui.checkbox(&mut self.show_console, "Console  `");
                         ui.checkbox(&mut self.show_floating_stats, "Floating stats");
                         ui.checkbox(&mut self.show_floating_minihelp, "Floating shortcuts");
+                        ui.checkbox(&mut self.show_arch_inspector, "🧠 Architecture inspector");
                         ui.separator();
                         ui.checkbox(&mut self.arch_autorotate, "Auto-rotate 3D");
                         ui.checkbox(&mut self.live, "Live mode  L");
@@ -4201,6 +4238,159 @@ impl eframe::App for App {
                     }); // close ScrollArea::vertical
             });
         } // show_left_panel
+
+        // Architecture inspector (#773 Phase 1.5) — floating window listing
+        // factory NeuralGraphs with their layer counts + parameter estimates.
+        if self.show_arch_inspector {
+            let mut open = self.show_arch_inspector;
+            egui::Window::new("🧠 Architecture inspector")
+                .open(&mut open)
+                .resizable(true)
+                .default_size([520.0, 440.0])
+                .frame(
+                    egui::Frame::none()
+                        .fill(theme::BG_CARD)
+                        .stroke(egui::Stroke::new(1.0, theme::ACCENT_PURPLE))
+                        .rounding(egui::Rounding::same(theme::RADIUS_MD))
+                        .inner_margin(egui::Margin::same(theme::SPACE_MD)),
+                )
+                .show(ctx, |ui| {
+                    use graphnet_engine::general_graph::{factories, NeuralGraph, NodeKind};
+                    ui.horizontal_wrapped(|ui| {
+                        for &c in ArchInspectorChoice::all() {
+                            let active = self.arch_inspector_selection == c;
+                            let resp = ui.add(
+                                egui::Button::new(
+                                    egui::RichText::new(c.label())
+                                        .size(theme::SIZE_SMALL)
+                                        .color(if active {
+                                            egui::Color32::WHITE
+                                        } else {
+                                            theme::TEXT_PRIMARY
+                                        })
+                                        .strong(),
+                                )
+                                .fill(if active {
+                                    theme::ACCENT_MID
+                                } else {
+                                    theme::BG_CARD_HOVER
+                                })
+                                .rounding(egui::Rounding::same(theme::RADIUS_SM)),
+                            );
+                            if resp.clicked() {
+                                self.arch_inspector_selection = c;
+                            }
+                        }
+                    });
+                    ui.separator();
+                    let graph: NeuralGraph = match self.arch_inspector_selection {
+                        ArchInspectorChoice::Gpt2Small => factories::gpt2_small(),
+                        ArchInspectorChoice::TransformerBlock => factories::transformer_block(),
+                        ArchInspectorChoice::ResnetBasicBlock => factories::resnet_basic_block(),
+                        ArchInspectorChoice::CurrentHdcStack => {
+                            factories::from_hdc_stack(self.stack.clone())
+                        }
+                    };
+                    ui.label(
+                        egui::RichText::new(&graph.metadata.family)
+                            .size(theme::SIZE_H2)
+                            .color(theme::ACCENT_BLUE)
+                            .strong(),
+                    );
+                    if !graph.metadata.notes.is_empty() {
+                        ui.label(
+                            egui::RichText::new(&graph.metadata.notes)
+                                .size(theme::SIZE_SMALL)
+                                .color(theme::TEXT_MUTED)
+                                .italics(),
+                        );
+                    }
+                    ui.add_space(theme::SPACE_SM);
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!("{} nodes", graph.nodes.len()))
+                                .size(theme::SIZE_SMALL)
+                                .color(theme::TEXT_PRIMARY)
+                                .strong(),
+                        );
+                        ui.label(
+                            egui::RichText::new(format!("· {} edges", graph.edges.len()))
+                                .size(theme::SIZE_SMALL)
+                                .color(theme::TEXT_MUTED),
+                        );
+                        ui.label(
+                            egui::RichText::new(format!("· ≈{} params", fmt_si(graph.total_params())))
+                                .size(theme::SIZE_SMALL)
+                                .color(theme::ACCENT_PURPLE)
+                                .strong(),
+                        );
+                    });
+                    // Kind counts chip row.
+                    ui.horizontal_wrapped(|ui| {
+                        for (tag, n) in graph.kind_counts() {
+                            ui.label(
+                                egui::RichText::new(format!(" {n}×{tag} "))
+                                    .size(theme::SIZE_TINY)
+                                    .background_color(theme::ACCENT_PURPLE.gamma_multiply(0.15))
+                                    .color(theme::ACCENT_PURPLE)
+                                    .monospace(),
+                            );
+                        }
+                    });
+                    ui.separator();
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false; 2])
+                        .max_height(280.0)
+                        .show(ui, |ui| {
+                            for (i, node) in graph.nodes.iter().enumerate() {
+                                let (tag, params) = match &node.kind {
+                                    NodeKind::Input { .. } => ("input", 0),
+                                    NodeKind::Output { .. } => ("output", 0),
+                                    NodeKind::Layer { kind, .. } => {
+                                        (kind.tag(), kind.param_count())
+                                    }
+                                    NodeKind::Activation { .. } => ("activation", 0),
+                                };
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(format!("[{i:>3}]"))
+                                            .size(theme::SIZE_TINY)
+                                            .color(theme::TEXT_MUTED)
+                                            .monospace(),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(format!(" {tag:<10}"))
+                                            .size(theme::SIZE_SMALL)
+                                            .color(theme::ACCENT_BLUE)
+                                            .monospace(),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(&node.label)
+                                            .size(theme::SIZE_SMALL)
+                                            .color(theme::TEXT_PRIMARY),
+                                    );
+                                    if params > 0 {
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                ui.label(
+                                                    egui::RichText::new(format!(
+                                                        "{} params",
+                                                        fmt_si(params)
+                                                    ))
+                                                    .size(theme::SIZE_TINY)
+                                                    .color(theme::TEXT_MUTED)
+                                                    .monospace(),
+                                                );
+                                            },
+                                        );
+                                    }
+                                });
+                            }
+                        });
+                });
+            self.show_arch_inspector = open;
+        }
 
         // Floating windows (#741) — Blender-style draggable/resizable.
         if self.show_floating_stats {
@@ -7772,6 +7962,20 @@ fn latency_sparkline(ui: &mut egui::Ui, values: impl Iterator<Item = f64>, heigh
         egui::FontId::proportional(theme::SIZE_TINY),
         theme::TEXT_MUTED,
     );
+}
+
+/// Format a count with SI suffix (1234 → "1.23K", 1234567 → "1.23M").
+fn fmt_si(n: usize) -> String {
+    let f = n as f64;
+    if f >= 1.0e9 {
+        format!("{:.2}B", f / 1.0e9)
+    } else if f >= 1.0e6 {
+        format!("{:.2}M", f / 1.0e6)
+    } else if f >= 1.0e3 {
+        format!("{:.2}K", f / 1.0e3)
+    } else {
+        format!("{n}")
+    }
 }
 
 /// Tiny inline plot of recent values, ∈ [-1, 1] expected.
