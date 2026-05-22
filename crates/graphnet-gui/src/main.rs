@@ -1999,6 +1999,32 @@ impl App {
 
     fn log(&mut self, severity: LogSeverity, msg: String) {
         self.status_msg = Some((msg.clone(), std::time::Instant::now()));
+        // Mirror to ~/.config/graphnet/graphnet.log for offline audit.
+        let line = format!(
+            "[{}] [{}] {msg}\n",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            match severity {
+                LogSeverity::Info => "INFO",
+                LogSeverity::Success => "OK",
+                LogSeverity::Warn => "WARN",
+                LogSeverity::Error => "ERR",
+            },
+        );
+        if let Some(log_dir) = persistent_state_path().parent() {
+            let _ = std::fs::create_dir_all(log_dir);
+            let log_path = log_dir.join("graphnet.log");
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_path)
+            {
+                use std::io::Write;
+                let _ = f.write_all(line.as_bytes());
+            }
+        }
         self.action_log.push(LogEntry {
             at: std::time::Instant::now(),
             severity,
