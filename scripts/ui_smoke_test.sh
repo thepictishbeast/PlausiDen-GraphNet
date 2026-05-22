@@ -102,11 +102,12 @@ step "14_left_closed"
 xdotool key --window "$WIN" Tab
 step "15_left_open"
 
-# 11. Cmd+N opens templates popup.
-xdotool key --window "$WIN" ctrl+n
-step "16_templates_popup"
-xdotool key --window "$WIN" Escape
-step "17_templates_closed"
+# 11. Templates popup — DISABLED. The xdotool key --window ctrl+n call
+# leaks to the file manager when GraphNet loses focus on some WMs,
+# which silently opens dozens of file-manager windows over many test
+# runs. Test the popup manually if needed.
+step "16_templates_popup_DISABLED"
+step "17_templates_closed_DISABLED"
 
 # 12. Cmd+1 saves to slot A.
 xdotool key --window "$WIN" ctrl+1
