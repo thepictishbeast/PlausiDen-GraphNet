@@ -5238,7 +5238,33 @@ impl eframe::App for App {
                                 })
                                 .collect();
                             card(ui, |ui| {
-                                contribution_bars(ui, &contributions);
+                                // egui_plot bar chart with per-op accent colors.
+                                use egui_plot::{Bar, BarChart, Plot};
+                                let bars: Vec<Bar> = contributions
+                                    .iter()
+                                    .map(|(idx, tag, sim)| {
+                                        let c = theme::op_color(tag);
+                                        Bar::new(*idx as f64, *sim)
+                                            .name(format!("[{idx}] {tag}"))
+                                            .fill(c)
+                                            .width(0.7)
+                                    })
+                                    .collect();
+                                let chart = BarChart::new(bars).name("per-op cos_sim");
+                                Plot::new("contribution_chart")
+                                    .height(120.0)
+                                    .show_axes([true, true])
+                                    .show_grid([false, true])
+                                    .allow_drag(false)
+                                    .allow_zoom(false)
+                                    .allow_scroll(false)
+                                    .y_axis_label("cos_sim")
+                                    .x_axis_label("op")
+                                    .include_y(-1.0)
+                                    .include_y(1.0)
+                                    .show(ui, |plot_ui| {
+                                        plot_ui.bar_chart(chart);
+                                    });
                             });
 
                             ui.add_space(theme::SPACE_LG);
