@@ -268,6 +268,12 @@ impl LogSeverity {
     }
 }
 
+struct HvSummary {
+    fingerprint: String,
+    percent_positive: f64,
+    binary_prefix: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ToolMode {
     Templates,
@@ -928,6 +934,29 @@ impl App {
                 "console cleared".to_string()
             }
             _ => format!("unknown command: '{cmd}' (try 'help')"),
+        }
+    }
+
+    /// Compute a human-readable summary of a hypervector (#753).
+    fn hv_summary(v: &Hypervector) -> HvSummary {
+        let data = v.as_slice();
+        let positive = data.iter().filter(|x| **x > 0).count();
+        let n = data.len();
+        let percent_pos = if n == 0 { 0.0 } else { positive as f64 / n as f64 };
+        // Blake3 fingerprint (truncated to 8 hex chars).
+        let bytes: &[u8] = bytemuck::cast_slice(data);
+        let hash = blake3::hash(bytes);
+        let fp = hash.to_hex().to_string()[..8].to_string();
+        // First 24 components as binary string.
+        let prefix: String = data
+            .iter()
+            .take(24)
+            .map(|x| if *x > 0 { '1' } else { '0' })
+            .collect();
+        HvSummary {
+            fingerprint: fp,
+            percent_positive: percent_pos,
+            binary_prefix: prefix,
         }
     }
 
@@ -2931,6 +2960,7 @@ impl eframe::App for App {
                     let left = &mut cols[0];
                     section_heading(left, "Input");
                     left.add_space(theme::SPACE_SM);
+                    let input_summary = Self::hv_summary(&input_clone);
                     card(left, |ui| {
                         ui.horizontal(|ui| {
                             ui.label(
@@ -2944,6 +2974,27 @@ impl eframe::App for App {
                                 regen_clicked = true;
                             }
                         });
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "fp {} · {:.1}% +1",
+                                input_summary.fingerprint,
+                                input_summary.percent_positive * 100.0
+                            ))
+                            .size(theme::SIZE_TINY)
+                            .color(theme::TEXT_MUTED)
+                            .monospace(),
+                        )
+                        .on_hover_text(
+                            "fp = blake3 fingerprint of the hypervector\n\
+                             % +1 = fraction of components with positive sign",
+                        );
+                        ui.label(
+                            egui::RichText::new(format!("…{}…", input_summary.binary_prefix))
+                                .size(theme::SIZE_TINY)
+                                .color(theme::ACCENT_BLUE)
+                                .monospace(),
+                        )
+                        .on_hover_text("First 24 components as binary (1 = +1, 0 = -1)");
                         ui.add_space(theme::SPACE_SM);
                         if hypervector_heatmap_clickable_cmap(ui, &input_clone, 100, 2.0, self.colormap) {
                             zoom_request_local = Some(ZoomTarget::Input);
@@ -2953,6 +3004,7 @@ impl eframe::App for App {
                     if has_output {
                         let right = &mut cols[1];
                         let out = self.last_output.clone().expect("checked");
+                        let out_summary = Self::hv_summary(&out);
                         section_heading(right, "Output (latest)");
                         right.add_space(theme::SPACE_SM);
                         card(right, |ui| {
@@ -2969,6 +3021,22 @@ impl eframe::App for App {
                                     );
                                 }
                             });
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "fp {} · {:.1}% +1",
+                                    out_summary.fingerprint,
+                                    out_summary.percent_positive * 100.0
+                                ))
+                                .size(theme::SIZE_TINY)
+                                .color(theme::TEXT_MUTED)
+                                .monospace(),
+                            );
+                            ui.label(
+                                egui::RichText::new(format!("…{}…", out_summary.binary_prefix))
+                                    .size(theme::SIZE_TINY)
+                                    .color(theme::ACCENT_PURPLE)
+                                    .monospace(),
+                            );
                             ui.add_space(theme::SPACE_SM);
                             if hypervector_heatmap_clickable_cmap(ui, &out, 100, 2.0, self.colormap) {
                                 zoom_request_local = Some(ZoomTarget::Output);
