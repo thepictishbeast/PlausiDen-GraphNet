@@ -4338,9 +4338,87 @@ impl eframe::App for App {
                         }
                     });
                     ui.separator();
+                    // Tiny 2D node-graph rendering — boxes stacked vertically
+                    // with arrows for edges. Layer color matches op_color()
+                    // when possible.
+                    {
+                        let viz_h = 180.0_f32;
+                        let (rect, _) = ui.allocate_exact_size(
+                            egui::vec2(ui.available_width(), viz_h),
+                            egui::Sense::hover(),
+                        );
+                        let painter = ui.painter_at(rect);
+                        painter.rect_filled(
+                            rect,
+                            theme::RADIUS_SM,
+                            theme::BG.gamma_multiply(0.5),
+                        );
+                        // Layout nodes in a horizontal flow.
+                        let n = graph.nodes.len() as f32;
+                        if n > 0.0 {
+                            let box_w = (rect.width() - 16.0) / (n + 1.0);
+                            let box_h = 22.0;
+                            let y = rect.center().y - box_h / 2.0;
+                            let mut centers: Vec<egui::Pos2> = Vec::with_capacity(graph.nodes.len());
+                            for i in 0..graph.nodes.len() {
+                                let x = rect.min.x + 8.0 + box_w * (i as f32 + 0.5);
+                                centers.push(egui::pos2(x, y + box_h / 2.0));
+                            }
+                            // Edges first (so boxes draw on top).
+                            for e in &graph.edges {
+                                if e.from < centers.len() && e.to < centers.len() {
+                                    painter.line_segment(
+                                        [centers[e.from], centers[e.to]],
+                                        egui::Stroke::new(
+                                            0.6,
+                                            theme::TEXT_MUTED.gamma_multiply(0.6),
+                                        ),
+                                    );
+                                }
+                            }
+                            // Nodes.
+                            for (i, node) in graph.nodes.iter().enumerate() {
+                                use graphnet_engine::general_graph::NodeKind;
+                                let (tag, c) = match &node.kind {
+                                    NodeKind::Input { .. } => ("in", theme::ACCENT_BLUE),
+                                    NodeKind::Output { .. } => ("out", theme::ACCENT_MID),
+                                    NodeKind::Activation { .. } => ("act", theme::ACCENT_PURPLE),
+                                    NodeKind::Layer { kind, .. } => (
+                                        kind.tag(),
+                                        match kind.tag() {
+                                            "dense" => theme::op_color("dense"),
+                                            "attention" => egui::Color32::from_rgb(0xE0, 0x6A, 0x5B),
+                                            "embedding" => egui::Color32::from_rgb(0xFF, 0xC1, 0x4D),
+                                            "conv2d" => egui::Color32::from_rgb(0x4D, 0xC4, 0x82),
+                                            "lstm" | "gru" => theme::ACCENT_PURPLE,
+                                            "layernorm" | "batchnorm" => theme::TEXT_MUTED,
+                                            _ => theme::TEXT_PRIMARY,
+                                        },
+                                    ),
+                                };
+                                let cx = centers[i].x;
+                                let r = egui::Rect::from_center_size(
+                                    centers[i],
+                                    egui::vec2(box_w - 2.0, box_h),
+                                );
+                                painter.rect_filled(r, 3.0, c.gamma_multiply(0.7));
+                                painter.rect_stroke(r, 3.0, egui::Stroke::new(1.0, c));
+                                if box_w > 30.0 {
+                                    painter.text(
+                                        egui::pos2(cx, centers[i].y),
+                                        egui::Align2::CENTER_CENTER,
+                                        tag,
+                                        egui::FontId::proportional(8.5),
+                                        egui::Color32::WHITE,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    ui.separator();
                     egui::ScrollArea::vertical()
                         .auto_shrink([false; 2])
-                        .max_height(280.0)
+                        .max_height(220.0)
                         .show(ui, |ui| {
                             for (i, node) in graph.nodes.iter().enumerate() {
                                 let (tag, params) = match &node.kind {
