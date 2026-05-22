@@ -5920,6 +5920,31 @@ fn architecture_graph_3d(
                                 egui::Color32::from_white_alpha(180),
                             ),
                         );
+                        // Tooltip with op info.
+                        let contrib_str = contributions
+                            .and_then(|c| c.get(*i))
+                            .map(|s| format!("\ncontribution: {s:+.3}"))
+                            .unwrap_or_default();
+                        egui::show_tooltip_at_pointer(
+                            ui.ctx(),
+                            ui.layer_id(),
+                            egui::Id::new(("3d_node_tip", *i)),
+                            |ui| {
+                                ui.label(
+                                    egui::RichText::new(format!("[{i}] {tag}"))
+                                        .size(theme::SIZE_BODY)
+                                        .color(theme::op_color(tag))
+                                        .strong(),
+                                );
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "left-click: select\nright-click: select + open inspector{contrib_str}"
+                                    ))
+                                    .size(theme::SIZE_SMALL)
+                                    .color(theme::TEXT_MUTED),
+                                );
+                            },
+                        );
                     }
                 }
             }
