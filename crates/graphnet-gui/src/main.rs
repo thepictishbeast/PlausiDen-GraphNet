@@ -109,6 +109,30 @@ struct App {
     demo_pace_sec: f64,
     /// Most recently mutated op index + timestamp (drives diff halo #718).
     recent_change: Option<(usize, std::time::Instant)>,
+    /// Workspace tab (#743).
+    workspace: Workspace,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Workspace {
+    Edit,
+    Live,
+    Compare,
+    Train,
+}
+
+impl Workspace {
+    fn all() -> &'static [Workspace] {
+        &[Workspace::Edit, Workspace::Live, Workspace::Compare, Workspace::Train]
+    }
+    fn label(self) -> &'static str {
+        match self {
+            Workspace::Edit => "📝 Edit",
+            Workspace::Live => "▶ Live",
+            Workspace::Compare => "⇄ Compare",
+            Workspace::Train => "🎓 Train",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -558,6 +582,7 @@ impl App {
             font_scale: 1.0,
             demo_pace_sec: 2.5,
             recent_change: None,
+            workspace: Workspace::Edit,
         };
         app.load_template("standard");
         // Try to restore previous session.
@@ -1544,12 +1569,40 @@ impl eframe::App for App {
                             .color(egui::Color32::WHITE)
                             .strong(),
                     );
-                    ui.add_space(theme::SPACE_SM);
-                    ui.label(
-                        egui::RichText::new("· Live REPL · v0.1.0")
-                            .size(theme::SIZE_SMALL)
-                            .color(egui::Color32::from_rgb(0xC8, 0xCC, 0xD9)),
-                    );
+                    ui.add_space(theme::SPACE_MD);
+                    // Workspace tabs (#743).
+                    for ws in Workspace::all() {
+                        let active = self.workspace == *ws;
+                        let resp = ui.add(
+                            egui::Button::new(
+                                egui::RichText::new(ws.label())
+                                    .size(theme::SIZE_SMALL)
+                                    .color(if active {
+                                        egui::Color32::WHITE
+                                    } else {
+                                        egui::Color32::from_rgb(0xA0, 0xA8, 0xB8)
+                                    })
+                                    .strong(),
+                            )
+                            .fill(if active {
+                                theme::ACCENT_MID
+                            } else {
+                                egui::Color32::from_rgb(0x15, 0x1A, 0x26)
+                            })
+                            .stroke(if active {
+                                egui::Stroke::new(1.0, theme::ACCENT_MID)
+                            } else {
+                                egui::Stroke::NONE
+                            })
+                            .rounding(egui::Rounding::same(theme::RADIUS_SM))
+                            .min_size(egui::vec2(0.0, 28.0)),
+                        );
+                        if resp.clicked() {
+                            self.workspace = *ws;
+                            self.set_status(format!("workspace → {}", ws.label()));
+                        }
+                        ui.add_space(2.0);
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let hero_btn = |ui: &mut egui::Ui,
                                         text: &str,
