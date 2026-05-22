@@ -1210,14 +1210,7 @@ impl App {
                     self.last_latency_ms.unwrap_or(0.0))
             }
             ["live"] => {
-                self.live = !self.live;
-                self.log(
-                    LogSeverity::Info,
-                    format!(
-                        "live mode {} (console)",
-                        if self.live { "▶ ON" } else { "⏹ OFF" }
-                    ),
-                );
+                self.toggle_live();
                 format!("live = {}", self.live)
             }
             ["add", kind] => {
@@ -1471,6 +1464,54 @@ impl App {
                 ),
             );
         }
+    }
+
+    /// Single source-of-truth for toggling live mode. Deduplicates the
+    /// keyboard / hero-button / console-command call sites that all used
+    /// to inline this 4-line block (#786 dedup pass).
+    fn toggle_live(&mut self) {
+        self.live = !self.live;
+        self.log(
+            LogSeverity::Info,
+            format!("live mode {}", if self.live { "▶ ON" } else { "⏹ OFF" }),
+        );
+    }
+
+    /// Evaluate a SymbolicFormula expression at given (x, t).
+    /// Uses evalexpr for runtime parsing. Returns None on parse error.
+    /// Demo of novel-AI symbolic-layer compute (#786 — makes the
+    /// LayerKind::SymbolicFormula variant actually do math).
+    #[allow(dead_code)]
+    pub fn eval_symbolic_formula(
+        formula: &str,
+        x: f64,
+        t: f64,
+        params: &[(String, f32)],
+    ) -> Option<f64> {
+        use evalexpr::{context_map, eval_with_context, ContextWithMutableVariables, Value};
+        let mut ctx = context_map! {
+            "x" => Value::Float(x),
+            "t" => Value::Float(t),
+            "pi" => Value::Float(std::f64::consts::PI),
+            "e" => Value::Float(std::f64::consts::E),
+        }
+        .ok()?;
+        for (name, v) in params {
+            ctx.set_value(name.clone(), Value::Float(f64::from(*v))).ok()?;
+        }
+        // Map common math functions to evalexpr equivalents.
+        let formula = formula
+            .replace("tanh(", "math::tanh(")
+            .replace("sin(", "math::sin(")
+            .replace("cos(", "math::cos(")
+            .replace("sqrt(", "math::sqrt(")
+            .replace("exp(", "math::exp(")
+            .replace("log(", "math::ln(");
+        eval_with_context(&formula, &ctx).ok().and_then(|v| match v {
+            Value::Float(f) => Some(f),
+            Value::Int(i) => Some(i as f64),
+            _ => None,
+        })
     }
 
     /// Load a .safetensors model weight file → parse metadata only
@@ -2240,6 +2281,7 @@ impl eframe::App for App {
         let mut png_request = false;
         let mut slot_save_request: Option<usize> = None;
         let mut slot_recall_request: Option<usize> = None;
+        let mut live_toggle_requested = false;
         let any_input = ctx.input(|i| {
             i.keys_down.iter().count() > 0 || i.pointer.any_down() || i.pointer.is_moving()
         });
@@ -2255,11 +2297,7 @@ impl eframe::App for App {
                 self.regenerate_input();
             }
             if i.key_pressed(egui::Key::L) {
-                self.live = !self.live;
-                self.log(
-                    LogSeverity::Info,
-                    format!("live mode {}", if self.live { "▶ ON" } else { "⏹ OFF" }),
-                );
+                live_toggle_requested = true;
             }
             let template_keys = [
                 egui::Key::Num1,
@@ -2396,6 +2434,9 @@ impl eframe::App for App {
         }
         if png_request {
             self.export_png();
+        }
+        if live_toggle_requested {
+            self.toggle_live();
         }
         if let Some(i) = slot_save_request {
             self.slots[i] = Some(self.stack.clone());
@@ -5986,14 +6027,7 @@ impl eframe::App for App {
                         .min_size(egui::vec2(75.0, 26.0)),
                     );
                     if live_btn.clicked() {
-                        self.live = !self.live;
-                        self.log(
-                            LogSeverity::Info,
-                            format!(
-                                "live mode {}",
-                                if self.live { "▶ ON" } else { "⏹ OFF" }
-                            ),
-                        );
+                        live_toggle_requested = true;
                     }
                     ui.label(
                         egui::RichText::new("  (Space / L)")

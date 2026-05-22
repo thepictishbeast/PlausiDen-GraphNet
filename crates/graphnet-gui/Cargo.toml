@@ -27,6 +27,10 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 # step toward general neural-net loading — metadata + raw bytes only,
 # no inference compute. Candle integration is a later iter.
 safetensors = "0.4"
+# evalexpr — runtime formula evaluator for LayerKind::SymbolicFormula.
+# Tiny (~20KB), no_std-compatible, supports +,-,*,/,sin,cos,sqrt,log,
+# variables. Makes the novel-AI symbolic layers actually compute.
+evalexpr = "11"
 # rodio is deferred — requires libasound2-dev on Linux. Reinstate when
 # the build host has it. Audio toggle is wired but produces silence.
 # rodio = { version = "0.19", default-features = false }
