@@ -118,6 +118,9 @@ struct App {
     demo_pace_sec: f64,
     /// Most recently mutated op index + timestamp (drives diff halo #718).
     recent_change: Option<(usize, std::time::Instant)>,
+    /// Set when the in-memory state diverges from disk; auto-persist
+    /// fires ~3s after the most recent dirty.
+    dirty_since: Option<std::time::Instant>,
     /// Workspace tab (#743).
     workspace: Workspace,
     /// Zoom-modal cell-size multiplier (#721).
@@ -697,6 +700,7 @@ impl App {
             font_scale: 1.0,
             demo_pace_sec: 2.5,
             recent_change: None,
+            dirty_since: None,
             workspace: Workspace::Edit,
             zoom_modal_scale: 1.0,
             snapshot_stack: None,
@@ -867,6 +871,7 @@ impl App {
                 self.stack.len()
             ),
         );
+        self.dirty();
     }
 
     /// Change the dimensionality on the fly. Drops all ops and the
@@ -903,6 +908,12 @@ impl App {
         );
     }
 
+    /// Mark the in-memory state as dirty so the auto-persist tick will
+    /// flush it to disk within ~3 seconds.
+    fn dirty(&mut self) {
+        self.dirty_since = Some(std::time::Instant::now());
+    }
+
     fn add_op(&mut self, kind: &str) {
         self.push_undo();
         let new_idx = self.stack.len();
@@ -933,6 +944,7 @@ impl App {
             LogSeverity::Info,
             format!("+ op [{new_idx}] {kind} — stack now {} ops", self.stack.len()),
         );
+        self.dirty();
     }
 
     fn remove_op(&mut self, idx: usize) {
@@ -944,6 +956,7 @@ impl App {
                 LogSeverity::Info,
                 format!("− op [{idx}] {tag} — stack now {} ops", self.stack.len()),
             );
+            self.dirty();
         } else {
             self.log(
                 LogSeverity::Warn,
@@ -980,6 +993,7 @@ impl App {
             LogSeverity::Info,
             format!("⟳ reseeded op [{idx}] {tag} → seed={new_seed}"),
         );
+        self.dirty();
     }
 
     fn arch_summary(&self) -> ArchSummary {
@@ -1466,11 +1480,25 @@ impl App {
 
     fn persist(&mut self) {
         let path = persistent_state_path();
+        let mut state_bytes = 0_usize;
+        let mut state_err: Option<String> = None;
         if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                state_err = Some(format!("mkdir failed: {e}"));
+            }
         }
-        if let Ok(yaml) = stack_to_yaml(&self.stack) {
-            let _ = std::fs::write(&path, yaml);
+        if state_err.is_none() {
+            match stack_to_yaml(&self.stack) {
+                Ok(yaml) => {
+                    state_bytes = yaml.len();
+                    if let Err(e) = std::fs::write(&path, &yaml) {
+                        state_err = Some(format!("write failed: {e}"));
+                    }
+                }
+                Err(e) => {
+                    state_err = Some(format!("encode failed: {e}"));
+                }
+            }
         }
         // Also persist user-prefs settings (#87).
         let prefs = format!(
@@ -1491,7 +1519,33 @@ impl App {
             }
         );
         let settings_path = persistent_settings_path();
-        let _ = std::fs::write(&settings_path, prefs);
+        let mut prefs_bytes = prefs.len();
+        let mut prefs_err: Option<String> = None;
+        if let Err(e) = std::fs::write(&settings_path, &prefs) {
+            prefs_err = Some(format!("write failed: {e}"));
+            prefs_bytes = 0;
+        }
+        // Verbose persistence logging — surfaces silent failures.
+        match (&state_err, &prefs_err) {
+            (None, None) => self.log(
+                LogSeverity::Info,
+                format!(
+                    "💾 persisted: state.yaml {state_bytes} B + settings.yaml {prefs_bytes} B"
+                ),
+            ),
+            (Some(e), None) => self.log(
+                LogSeverity::Error,
+                format!("⚠ state.yaml persist failed: {e}"),
+            ),
+            (None, Some(e)) => self.log(
+                LogSeverity::Error,
+                format!("⚠ settings.yaml persist failed: {e}"),
+            ),
+            (Some(a), Some(b)) => self.log(
+                LogSeverity::Error,
+                format!("⚠ persistence broken: state={a} settings={b}"),
+            ),
+        }
     }
 
     fn restore_settings(&mut self) {
@@ -1866,6 +1920,12 @@ impl App {
 }
 
 impl eframe::App for App {
+    /// Called by eframe before exit (Ctrl+C / window close / shutdown).
+    /// Guarantees we persist even if no save_yaml was triggered this session.
+    fn save(&mut self, _storage: &mut dyn eframe::Storage) {
+        self.persist();
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Force-maximize on EVERY frame until the WM honors it. Some WMs
         // ignore both with_maximized() AND single-shot Maximized — sending
@@ -2374,6 +2434,14 @@ impl eframe::App for App {
         if self.last_sample_at.elapsed().as_millis() > 750 {
             self.last_sample = Some(self.resource_monitor.sample());
             self.last_sample_at = std::time::Instant::now();
+        }
+
+        // Auto-persist every 3s after a mutation (debounced flush).
+        if let Some(t) = self.dirty_since {
+            if t.elapsed().as_secs_f32() > 3.0 {
+                self.persist();
+                self.dirty_since = None;
+            }
         }
 
         // Update window title to reflect current workspace.
