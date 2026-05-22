@@ -6970,6 +6970,59 @@ fn architecture_graph_3d(
         theme::TEXT_DIM,
     );
 
+    // XYZ orientation gizmo (FreeCAD-style) — bottom-right corner.
+    // Shows current view rotation. X=red, Y=green, Z=blue (industry standard).
+    let gizmo_o = egui::pos2(rect.max.x - 38.0, rect.max.y - 38.0);
+    let gizmo_r = 22.0_f32;
+    let rotate_axis = |x: f32, y: f32, z: f32| -> (f32, f32, f32) {
+        // Same rotation as the main projection, no perspective, no translate.
+        let (sy, cyaw) = yaw.sin_cos();
+        let xr = x * cyaw + z * sy;
+        let zr1 = -x * sy + z * cyaw;
+        let (sp, cp) = pitch.sin_cos();
+        let yr1 = y * cp - zr1 * sp;
+        let zr = y * sp + zr1 * cp;
+        let (sr, cr) = roll.sin_cos();
+        let xr2 = xr * cr - yr1 * sr;
+        let yr2 = xr * sr + yr1 * cr;
+        (xr2, yr2, zr)
+    };
+    // Three axis endpoints sorted by depth so the front axis draws on top.
+    let mut axes: Vec<(&str, egui::Color32, (f32, f32, f32))> = vec![
+        ("x", egui::Color32::from_rgb(0xE0, 0x6A, 0x5B), rotate_axis(1.0, 0.0, 0.0)),
+        ("y", egui::Color32::from_rgb(0x4D, 0xC4, 0x82), rotate_axis(0.0, -1.0, 0.0)),
+        ("z", egui::Color32::from_rgb(0x5B, 0x8D, 0xEF), rotate_axis(0.0, 0.0, 1.0)),
+    ];
+    axes.sort_by(|a, b| {
+        a.2.2.partial_cmp(&b.2.2).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    // Filled box behind gizmo to keep it readable against nodes.
+    painter.rect_filled(
+        egui::Rect::from_center_size(gizmo_o, egui::vec2(60.0, 60.0)),
+        4.0,
+        theme::BG_CARD.gamma_multiply(0.65),
+    );
+    for (label, colour, (ax, ay, _az)) in &axes {
+        let tip = egui::pos2(gizmo_o.x + ax * gizmo_r, gizmo_o.y + ay * gizmo_r);
+        painter.line_segment(
+            [gizmo_o, tip],
+            egui::Stroke::new(1.6, *colour),
+        );
+        // Label at tip end.
+        painter.text(
+            egui::pos2(
+                gizmo_o.x + ax * (gizmo_r + 6.0),
+                gizmo_o.y + ay * (gizmo_r + 6.0),
+            ),
+            egui::Align2::CENTER_CENTER,
+            *label,
+            egui::FontId::proportional(10.0),
+            *colour,
+        );
+    }
+    // Tiny origin dot.
+    painter.circle_filled(gizmo_o, 2.0, theme::TEXT_PRIMARY);
+
     // Apply the scroll-wheel zoom adjustment via the action channel — the
     // caller already routes zoom through ArchToolAction. Translate here.
     if zoom_adjust.abs() > 0.001 && tool_action.is_none() {
