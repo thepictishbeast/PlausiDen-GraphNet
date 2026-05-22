@@ -2742,6 +2742,26 @@ impl eframe::App for App {
                         .strong(),
                 );
                 ui.separator();
+                // Auto-save state indicator: dot before the creature name.
+                let dirty_age = self.dirty_since.map(|t| t.elapsed().as_secs_f32());
+                let dirty_label = match dirty_age {
+                    Some(age) if age < 3.0 => Some(("●", theme::ACCENT_PURPLE)),
+                    Some(_) => Some(("●", theme::ACCENT_BLUE)),
+                    None => Some(("✓", egui::Color32::from_rgb(0x4D, 0xC4, 0x82))),
+                };
+                if let Some((glyph, c)) = dirty_label {
+                    ui.label(
+                        egui::RichText::new(glyph)
+                            .size(theme::SIZE_BODY)
+                            .color(c)
+                            .strong(),
+                    )
+                    .on_hover_text(if dirty_age.is_some() {
+                        "unsaved changes — auto-persist in <3s"
+                    } else {
+                        "all changes saved"
+                    });
+                }
                 // Creature name from op composition (game-feel).
                 ui.label(
                     egui::RichText::new(format!("🧬 {}", self.creature_name()))
