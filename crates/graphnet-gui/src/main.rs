@@ -5634,6 +5634,8 @@ fn architecture_graph_3d(
         } else {
             None
         };
+    // Hover position for node-hover highlight + tooltip.
+    let hover_pos = response.hover_pos();
 
     for (kind, pos, depth) in &nodes {
         let size_mul = (3.0 / depth.max(0.1)).clamp(0.5, 1.6);
@@ -5703,6 +5705,21 @@ fn architecture_graph_3d(
                     let dy = rcp.y - pos.y;
                     if (dx * dx + dy * dy).sqrt() <= r + 4.0 {
                         clicked = Some(*i);
+                    }
+                }
+                // Hover state — bright ring + tooltip.
+                if let Some(hp) = hover_pos {
+                    let dx = hp.x - pos.x;
+                    let dy = hp.y - pos.y;
+                    if (dx * dx + dy * dy).sqrt() <= r + 4.0 {
+                        painter.circle_stroke(
+                            *pos,
+                            r + 3.0,
+                            egui::Stroke::new(
+                                1.5,
+                                egui::Color32::from_white_alpha(180),
+                            ),
+                        );
                     }
                 }
             }
