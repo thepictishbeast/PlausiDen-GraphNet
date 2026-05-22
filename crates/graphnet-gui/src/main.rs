@@ -3272,9 +3272,47 @@ impl eframe::App for App {
                         let right = &mut cols[1];
                         let out = self.last_output.clone().expect("checked");
                         let out_summary = Self::hv_summary(&out);
+                        // Game-feel: green halo on high cos_sim, red on inverted.
+                        let glow_intensity = self.last_forward_at
+                            .map(|t| {
+                                let age = t.elapsed().as_secs_f32();
+                                if age < 0.8 {
+                                    Some(1.0 - age / 0.8)
+                                } else {
+                                    None
+                                }
+                            })
+                            .flatten();
+                        let glow_color = match (self.last_cos_sim, glow_intensity) {
+                            (Some(s), Some(intensity)) if s > 0.85 => Some((
+                                egui::Color32::from_rgb(0x4D, 0xC4, 0x82),
+                                intensity,
+                            )),
+                            (Some(s), Some(intensity)) if s < -0.5 => Some((
+                                egui::Color32::from_rgb(0xE0, 0x6A, 0x5B),
+                                intensity,
+                            )),
+                            _ => None,
+                        };
                         section_heading(right, "Output (latest)");
                         right.add_space(theme::SPACE_SM);
                         card(right, |ui| {
+                            if let Some((c, intensity)) = glow_color {
+                                ui.painter().rect_stroke(
+                                    ui.max_rect().expand(2.0),
+                                    egui::Rounding::same(theme::RADIUS_MD),
+                                    egui::Stroke::new(
+                                        3.0,
+                                        egui::Color32::from_rgba_unmultiplied(
+                                            c.r(),
+                                            c.g(),
+                                            c.b(),
+                                            (intensity * 220.0) as u8,
+                                        ),
+                                    ),
+                                );
+                                ctx.request_repaint();
+                            }
                             ui.horizontal(|ui| {
                                 ui.label(
                                     egui::RichText::new(format!("dim = {}", out.dim()))
