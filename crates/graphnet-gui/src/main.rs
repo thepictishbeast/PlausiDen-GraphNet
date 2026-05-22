@@ -1767,6 +1767,10 @@ impl eframe::App for App {
             if (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::E) {
                 png_request = true;
             }
+            // ⌘N / Ctrl+N opens the templates popup (new document).
+            if (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::N) {
+                self.show_templates_popup = true;
+            }
             // ⌘/Ctrl + digit 1-4 = save current to slot.
             // ⌘/Ctrl + Shift + digit 1-4 = recall slot.
             if i.modifiers.command || i.modifiers.ctrl {
@@ -1814,7 +1818,8 @@ impl eframe::App for App {
             if i.key_pressed(egui::Key::H) || i.key_pressed(egui::Key::F1) {
                 self.show_help = !self.show_help;
             }
-            // More shortcuts (#749).
+            // More shortcuts (#749). N without modifier = add negate;
+            // Ctrl/Cmd+N = open templates popup (handled above).
             if !i.modifiers.command && !i.modifiers.ctrl {
                 if i.key_pressed(egui::Key::A) {
                     self.add_op("identity");
