@@ -2059,9 +2059,38 @@ impl eframe::App for App {
                             .strong(),
                     );
                     ui.add_space(theme::SPACE_MD);
-                    // Workspace tabs (#743).
+                    // Workspace tabs (#743). Each tab gets a contextual badge:
+                    //   Edit    → op count
+                    //   Live    → fps
+                    //   Compare → filled slots
+                    //   Train   → train steps
                     for ws in Workspace::all() {
                         let active = self.workspace == *ws;
+                        let badge = match ws {
+                            Workspace::Edit if self.stack.len() > 0 => {
+                                Some(format!("· {}", self.stack.len()))
+                            }
+                            Workspace::Live if self.live && self.live_fps > 0.5 => {
+                                Some(format!("· {:.0}fps", self.live_fps))
+                            }
+                            Workspace::Compare => {
+                                let n = self.slots.iter().filter(|s| s.is_some()).count();
+                                if n > 0 {
+                                    Some(format!("· {n}/4"))
+                                } else {
+                                    None
+                                }
+                            }
+                            Workspace::Train if self.train.steps > 0 => {
+                                Some(format!("· {}", self.train.steps))
+                            }
+                            _ => None,
+                        };
+                        let label_text = if let Some(b) = badge {
+                            format!("{} {}", ws.label(), b)
+                        } else {
+                            ws.label().to_string()
+                        };
                         // Pulse the Live tab when live mode is actually running.
                         let pulse = if *ws == Workspace::Live && self.live {
                             let t = (std::time::SystemTime::now()
@@ -2096,7 +2125,7 @@ impl eframe::App for App {
                         };
                         let resp = ui.add(
                             egui::Button::new(
-                                egui::RichText::new(ws.label())
+                                egui::RichText::new(&label_text)
                                     .size(theme::SIZE_SMALL)
                                     .color(if active {
                                         egui::Color32::WHITE
