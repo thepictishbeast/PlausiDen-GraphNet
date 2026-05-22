@@ -8192,6 +8192,50 @@ fn architecture_graph_3d(
         theme::TEXT_DIM,
     );
 
+    // Scientific-vis axis labels at the 3D viewport boundary (inspired by
+    // 3D Examples/yonatan_nature_sci_rep — labels at the edges of the
+    // bounding box). Project unit-vector endpoints from the scene origin.
+    {
+        let proj_axis = |x: f32, y: f32, z: f32| -> egui::Pos2 {
+            let (sy, cyaw) = yaw.sin_cos();
+            let xr = x * cyaw + z * sy;
+            let zr1 = -x * sy + z * cyaw;
+            let (sp, cp) = pitch.sin_cos();
+            let yr1 = y * cp - zr1 * sp;
+            let zr = y * sp + zr1 * cp;
+            let (sr, cr) = roll.sin_cos();
+            let xr2 = xr * cr - yr1 * sr;
+            let yr2 = xr * sr + yr1 * cr;
+            let cam_z = -3.0_f32;
+            let depth = zr - cam_z;
+            let persp = 2.4 / depth.max(0.1);
+            egui::pos2(cx + xr2 * scale * persp, cy + yr2 * scale * persp)
+        };
+        let axis_label = |painter: &egui::Painter, end: egui::Pos2, lbl: &str, c: egui::Color32| {
+            painter.text(
+                end,
+                egui::Align2::CENTER_CENTER,
+                lbl,
+                egui::FontId::proportional(11.0),
+                c,
+            );
+        };
+        // Endpoint positions for X/Y/Z axes, projected from world (1.6, 0, 0) etc.
+        let px = proj_axis(1.6, 0.0, 0.0);
+        let py = proj_axis(0.0, -1.6, 0.0); // y is flipped in screen space
+        let pz = proj_axis(0.0, 0.0, 1.6);
+        // Only label if inside viewport rect.
+        if rect.contains(px) {
+            axis_label(&painter, px, "X", egui::Color32::from_rgb(0xE0, 0x6A, 0x5B));
+        }
+        if rect.contains(py) {
+            axis_label(&painter, py, "Y", egui::Color32::from_rgb(0x4D, 0xC4, 0x82));
+        }
+        if rect.contains(pz) {
+            axis_label(&painter, pz, "Z", egui::Color32::from_rgb(0x5B, 0x8D, 0xEF));
+        }
+    }
+
     // XYZ orientation gizmo (FreeCAD-style) — bottom-right corner.
     // Shows current view rotation. X=red, Y=green, Z=blue (industry standard).
     let gizmo_o = egui::pos2(rect.max.x - 38.0, rect.max.y - 38.0);
