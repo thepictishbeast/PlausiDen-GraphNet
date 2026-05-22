@@ -137,6 +137,10 @@ struct App {
     train: TrainState,
     /// Loaded image path (for status display) (#758).
     loaded_image: Option<std::path::PathBuf>,
+    /// When was the most recent 3D op-node click? Used to flash the node.
+    last_node_click_at: Option<std::time::Instant>,
+    /// Which op was last clicked in the 3D graph (for the flash).
+    last_node_clicked: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -685,6 +689,8 @@ impl App {
             show_floating_minihelp: false,
             train: TrainState::default(),
             loaded_image: None,
+            last_node_click_at: None,
+            last_node_clicked: None,
             slots: [None, None, None, None],
             active_slot: 0,
             audio: None,
@@ -4376,6 +4382,18 @@ impl eframe::App for App {
                             .collect()
                     });
                     let contrib_slice = contrib_vec.as_deref();
+                    // Node click flash intensity (0..1) decays over 0.5s.
+                    let click_flash = self.last_node_click_at.and_then(|t| {
+                        let age = t.elapsed().as_secs_f32();
+                        if age < 0.5 {
+                            Some((self.last_node_clicked?, 1.0 - age / 0.5))
+                        } else {
+                            None
+                        }
+                    });
+                    if click_flash.is_some() {
+                        ctx.request_repaint();
+                    }
                     let (clicked, new_yaw, new_pitch, new_roll, action) =
                         architecture_graph_3d(
                             ui,
@@ -4388,6 +4406,7 @@ impl eframe::App for App {
                             autorotate_state,
                             particle_phase,
                             contrib_slice,
+                            click_flash,
                         );
                     if let Some(idx) = clicked {
                         graph_click = Some(idx);
@@ -4553,6 +4572,9 @@ impl eframe::App for App {
                     } else {
                         Some(idx)
                     };
+                    self.last_node_click_at = Some(std::time::Instant::now());
+                    self.last_node_clicked = Some(idx);
+                    ctx.request_repaint();
                 }
 
                 // (cos_sim / latency sparklines moved to the right panel.)
@@ -5411,6 +5433,7 @@ fn architecture_graph_3d(
     autorotate: bool,
     particle_phase: Option<f32>,
     contributions: Option<&[f64]>,
+    click_flash: Option<(usize, f32)>,
 ) -> (Option<usize>, f32, f32, f32, Option<ArchToolAction>) {
     let n_ops = op_tags.len();
     let height = 360.0_f32;
@@ -5642,6 +5665,24 @@ fn architecture_graph_3d(
                 }
                 // Symbolic glyph in the upper-right of the node (#756).
                 draw_op_glyph(&painter, *pos, r, tag, size_mul);
+                // Click flash halo — bright white pulse on freshly-clicked node.
+                if let Some((flash_idx, intensity)) = click_flash {
+                    if flash_idx == *i {
+                        painter.circle_stroke(
+                            *pos,
+                            r + 6.0 + (1.0 - intensity) * 12.0,
+                            egui::Stroke::new(
+                                3.0 * intensity,
+                                egui::Color32::from_rgba_unmultiplied(
+                                    255,
+                                    255,
+                                    255,
+                                    (intensity * 220.0) as u8,
+                                ),
+                            ),
+                        );
+                    }
+                }
                 painter.circle_stroke(
                     *pos,
                     r,
