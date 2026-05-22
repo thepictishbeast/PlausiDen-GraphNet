@@ -3824,11 +3824,33 @@ impl eframe::App for App {
                                     .size(theme::SIZE_SMALL),
                                 );
                             } else {
-                                loss_sparkline(
-                                    ui,
-                                    self.train.loss_history.iter().copied(),
-                                    120.0,
-                                );
+                                // egui_plot — real plot with axes + grid + zero
+                                // baseline. Loss is in [0, 2]; show 0..max+margin.
+                                use egui_plot::{Line, Plot, PlotPoints};
+                                let pts: PlotPoints = self
+                                    .train
+                                    .loss_history
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, v)| [i as f64, *v])
+                                    .collect();
+                                Plot::new("loss_curve")
+                                    .height(140.0)
+                                    .show_axes([true, true])
+                                    .show_grid([true, true])
+                                    .allow_drag(false)
+                                    .allow_zoom(true)
+                                    .allow_scroll(false)
+                                    .y_axis_label("loss")
+                                    .x_axis_label("step")
+                                    .show(ui, |plot_ui| {
+                                        plot_ui.line(
+                                            Line::new(pts)
+                                                .color(theme::ACCENT_BLUE)
+                                                .width(1.8)
+                                                .name("loss"),
+                                        );
+                                    });
                             }
                         });
                     }
