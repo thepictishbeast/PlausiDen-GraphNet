@@ -127,6 +127,15 @@ struct App {
     per_ws_panels: [(bool, bool); 4],
     /// Zoom-modal cell-size multiplier (#721).
     zoom_modal_scale: f32,
+    /// User-tweakable W parameter for the symbolic-formula preview (#780).
+    sym_w: f32,
+    /// User-tweakable b parameter for the symbolic-formula preview.
+    sym_b: f32,
+    /// Show t-animation in the symbolic preview (auto-cycles t) — when
+    /// false, t freezes at the slider value below.
+    sym_animate: bool,
+    /// Frozen t value when sym_animate is false.
+    sym_t_frozen: f32,
     /// A/B compare: snapshot of a stack to compare against current (#711).
     snapshot_stack: Option<Stack>,
     /// 4 stack slots A/B/C/D for multi-stack comparison (#722). None = empty slot.
@@ -761,6 +770,10 @@ impl App {
             ],
             workspace: Workspace::Edit,
             zoom_modal_scale: 1.0,
+            sym_w: 1.0,
+            sym_b: 0.0,
+            sym_animate: true,
+            sym_t_frozen: 0.0,
             snapshot_stack: None,
             show_left_panel: true,
             show_right_panel: true,
@@ -4471,8 +4484,8 @@ impl eframe::App for App {
                         // Hard-coded reference matching factories::novel_ai_demo.
                         let formula = "tanh(W*x + b) + 0.1*sin(t)";
                         let params = vec![
-                            ("W".to_string(), 1.0_f32),
-                            ("b".to_string(), 0.0_f32),
+                            ("W".to_string(), self.sym_w),
+                            ("b".to_string(), self.sym_b),
                         ];
                         ui.label(
                             egui::RichText::new(format!("formula: {formula}"))
@@ -4480,13 +4493,53 @@ impl eframe::App for App {
                                 .monospace()
                                 .color(theme::TEXT_PRIMARY),
                         );
-                        // Plot the formula across x ∈ [-3, 3] at t = current_time
-                        // for instant visual feedback.
-                        let t = (std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_secs_f64())
-                            .unwrap_or(0.0))
-                            % 6.28;
+                        // Interactive sliders — live weight editing demo (#780).
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("W")
+                                    .color(theme::ACCENT_BLUE)
+                                    .size(theme::SIZE_SMALL)
+                                    .monospace(),
+                            );
+                            ui.add(
+                                egui::Slider::new(&mut self.sym_w, -3.0..=3.0)
+                                    .clamping(egui::SliderClamping::Always),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("b")
+                                    .color(theme::ACCENT_BLUE)
+                                    .size(theme::SIZE_SMALL)
+                                    .monospace(),
+                            );
+                            ui.add(
+                                egui::Slider::new(&mut self.sym_b, -2.0..=2.0)
+                                    .clamping(egui::SliderClamping::Always),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut self.sym_animate, "animate t");
+                            if !self.sym_animate {
+                                ui.add(
+                                    egui::Slider::new(
+                                        &mut self.sym_t_frozen,
+                                        0.0..=6.28,
+                                    )
+                                    .text("t (frozen)"),
+                                );
+                            }
+                        });
+                        // Plot the formula across x ∈ [-3, 3] at current t.
+                        let t = if self.sym_animate {
+                            (std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs_f64())
+                                .unwrap_or(0.0))
+                                % 6.28
+                        } else {
+                            f64::from(self.sym_t_frozen)
+                        };
                         use egui_plot::{Line, Plot, PlotPoints};
                         let pts: PlotPoints = (-30..=30)
                             .map(|i| {
