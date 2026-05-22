@@ -89,10 +89,37 @@ pub fn install(ctx: &egui::Context) {
 }
 
 /// Register the Phosphor icon font alongside the default fonts so we can
-/// use phosphor icon glyphs anywhere in the UI.
+/// use phosphor icon glyphs anywhere in the UI. Also installs the
+/// NotoSansSymbols fonts so that arrows (← → ↑ ↓), math symbols
+/// (∀ ∃ Σ π), and miscellaneous Unicode (★ ♦ ◆) all render instead
+/// of showing as squares.
 fn install_phosphor_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+
+    // NotoSansSymbols — arrows, Greek, math operators, currency, etc.
+    fonts.font_data.insert(
+        "noto_symbols".to_owned(),
+        egui::FontData::from_static(include_bytes!(
+            "../assets/NotoSansSymbols-Regular.ttf"
+        )),
+    );
+    // NotoSansSymbols2 — pictographs, geometric shapes, dingbats, more
+    // miscellaneous symbols. The two combined cover virtually every
+    // non-emoji unicode point used in a UI.
+    fonts.font_data.insert(
+        "noto_symbols2".to_owned(),
+        egui::FontData::from_static(include_bytes!(
+            "../assets/NotoSansSymbols2-Regular.ttf"
+        )),
+    );
+    // Append symbol fonts AFTER the default proportional + emoji fonts,
+    // so they only kick in for glyphs the primary fonts can't render.
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        let list = fonts.families.entry(family).or_default();
+        list.push("noto_symbols".to_owned());
+        list.push("noto_symbols2".to_owned());
+    }
     ctx.set_fonts(fonts);
 }
 

@@ -521,7 +521,7 @@ const WALKTHROUGH_STEPS: &[(&str, &str)] = &[
         "Welcome to GraphNet",
         "A live REPL + graphing calculator for HDC neural networks. \
          No training, no GPU model files — just compose ops and watch the \
-         network behave in real time. Press → for the tour.",
+         network behave in real time. Press 'Next' for the tour.",
     ),
     (
         "1. Pick a template (or blank)",
@@ -8613,7 +8613,7 @@ fn architecture_graph_3d(
             painter.text(
                 egui::pos2(box_rect.min.x + 8.0, box_rect.min.y + 36.0),
                 egui::Align2::LEFT_TOP,
-                "← / → to nav · × to remove",
+                "arrow keys: nav  ·  Backspace: remove",
                 egui::FontId::proportional(theme::SIZE_TINY),
                 theme::TEXT_DIM,
             );
