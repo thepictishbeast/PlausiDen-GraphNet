@@ -494,15 +494,25 @@ const WALKTHROUGH_STEPS: &[(&str, &str)] = &[
     (
         "7. Save / Load / Share / Console",
         "⌘S / ⌘O for save/load YAML (native file dialogs). ⌘E for PNG \
-         export. Drag-drop a .yaml on the window to load. Press ` (backtick) \
-         for the REPL/console — type 'help' for commands. Auto-saves to \
-         ~/.config/graphnet/state.yaml.",
+         export. ⌘N opens templates. Drag-drop a .yaml on the window to \
+         load. Press ` for the REPL/console (Tab auto-completes commands, \
+         ↑/↓ recalls history). Auto-saves stack + theme + colormap + \
+         workspace to ~/.config/graphnet/.",
     ),
     (
-        "8. Help is always there",
-        "Press H or F1 anytime — shows shortcuts, achievements grid, \
-         experiment recipes. Adaptive hints surface a banner if you're \
-         idle for 30 seconds with stuck state. Esc closes any modal.",
+        "8. Workspaces + Compare + Train",
+        "Top tabs: 📝 Edit · ▶ Live · ⇄ Compare · 🎓 Train. Compare = 4-slot \
+         A/B/C/D + chain-composition. Each tab shows a live badge (ops/fps/\
+         slots/steps). Ctrl+1-4 saves stack to a slot; Ctrl+Shift+1-4 \
+         recalls. Train workspace: hill-climb / simulated-anneal / random \
+         training with loss curve.",
+    ),
+    (
+        "9. Help is always there",
+        "Press H or F1 anytime — shows shortcuts, achievements grid (12), \
+         and recipes, plus 📖 Replay tutorial + 🎬 Run demo + ✕ Close \
+         buttons. Adaptive hints surface a banner if you're idle for 30s \
+         with stuck state. Esc closes any modal (then deselects).",
     ),
 ];
 
