@@ -3993,16 +3993,31 @@ impl eframe::App for App {
                         });
 
                     ui.add_space(theme::SPACE_LG);
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "Achievements ({}/{})",
-                            self.achievements.len(),
-                            11
-                        ))
-                        .size(theme::SIZE_H2)
-                        .color(theme::ACCENT_BLUE)
-                        .strong(),
-                    );
+                    // Achievement count badge with progress bar.
+                    let total_ach = 12_usize;
+                    let unlocked = self.achievements.len().min(total_ach);
+                    let pct = unlocked as f32 / total_ach as f32;
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "Achievements  {}/{}",
+                                unlocked, total_ach
+                            ))
+                            .size(theme::SIZE_H2)
+                            .color(theme::ACCENT_BLUE)
+                            .strong(),
+                        );
+                        // Inline mini progress bar.
+                        let (rect, _) = ui.allocate_exact_size(
+                            egui::vec2(80.0, 8.0),
+                            egui::Sense::hover(),
+                        );
+                        let painter = ui.painter();
+                        painter.rect_filled(rect, 3.0, theme::BG_CARD_HOVER);
+                        let mut fill = rect;
+                        fill.max.x = fill.min.x + rect.width() * pct;
+                        painter.rect_filled(fill, 3.0, theme::ACCENT_BLUE);
+                    });
                     ui.add_space(theme::SPACE_SM);
                     let all_badges: &[(&str, &str, &str)] = &[
                         ("first_forward", "🚀", "First Forward — run any forward"),
