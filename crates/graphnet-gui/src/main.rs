@@ -349,12 +349,12 @@ impl ToolMode {
     }
     fn label(self) -> &'static str {
         match self {
-            ToolMode::Templates => "Templates",
+            ToolMode::Templates => "Templates (open popup)",
             ToolMode::Edit => "Edit stack",
-            ToolMode::Inspect => "Inspect",
-            ToolMode::Compare => "Compare (TBD)",
+            ToolMode::Inspect => "Inspect (selected op)",
+            ToolMode::Compare => "Compare (A/B/C/D slots)",
             ToolMode::Settings => "Settings",
-            ToolMode::Help => "Help",
+            ToolMode::Help => "Help (open overlay)",
         }
     }
 }
@@ -1744,6 +1744,11 @@ impl eframe::App for App {
                             self.show_help = !self.show_help;
                         }
                         ui.add_space(theme::SPACE_XS);
+                        // ⌨ Console toggle button — owner asked for visibility.
+                        if hero_btn(ui, " ⌨ Console ", self.show_console).clicked() {
+                            self.show_console = !self.show_console;
+                        }
+                        ui.add_space(theme::SPACE_XS);
                         let demo_active = self.demo.is_some();
                         let demo_lbl = if demo_active { " ⏹ Stop demo " } else { " ▶ Demo " };
                         if hero_btn(ui, demo_lbl, demo_active).clicked() {
@@ -1975,9 +1980,21 @@ impl eframe::App for App {
                             )
                             .on_hover_text(mode.label());
                         if resp.clicked() {
-                            self.tool_mode = mode;
-                            if mode == ToolMode::Help {
-                                self.show_help = true;
+                            // Templates + Help are ACTIONS, not panel modes —
+                            // they trigger popups and snap the panel back to
+                            // Edit so the user has a useful view to work in.
+                            match mode {
+                                ToolMode::Templates => {
+                                    self.show_templates_popup = true;
+                                    self.tool_mode = ToolMode::Edit;
+                                }
+                                ToolMode::Help => {
+                                    self.show_help = true;
+                                    self.tool_mode = ToolMode::Edit;
+                                }
+                                _ => {
+                                    self.tool_mode = mode;
+                                }
                             }
                         }
                         ui.add_space(theme::SPACE_XS);
@@ -1996,18 +2013,35 @@ impl eframe::App for App {
                     .inner_margin(egui::Margin::same(theme::SPACE_LG)),
             )
             .show(ctx, |ui| {
+                // IDE-style header bar with title + close × button.
+                ui.horizontal(|ui| {
+                    let mode_label = self.tool_mode.label();
+                    ui.label(
+                        egui::RichText::new(mode_label)
+                            .size(theme::SIZE_TINY)
+                            .color(theme::ACCENT_PURPLE)
+                            .strong(),
+                    );
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            if ui
+                                .small_button("×")
+                                .on_hover_text("close panel (Tab to re-open)")
+                                .clicked()
+                            {
+                                self.show_left_panel = false;
+                            }
+                        },
+                    );
+                });
+                ui.separator();
                 egui::ScrollArea::vertical()
                     .auto_shrink([false; 2])
                     .max_height(f32::INFINITY)
                     .show(ui, |ui| {
-                // Mode-aware left panel content.
-                let mode_label = self.tool_mode.label();
-                ui.label(
-                    egui::RichText::new(mode_label)
-                        .size(theme::SIZE_TINY)
-                        .color(theme::ACCENT_PURPLE)
-                        .strong(),
-                );
+                // Mode-aware left panel content (label moved to header above).
+                let _mode_label = self.tool_mode.label();
                 ui.add_space(theme::SPACE_SM);
                 if self.tool_mode == ToolMode::Settings {
                     section_heading(ui, "Behaviour");
@@ -2395,6 +2429,32 @@ impl eframe::App for App {
                             }
                         });
                     }
+                    return;
+                }
+                if self.tool_mode == ToolMode::Inspect {
+                    section_heading(ui, "Inspect");
+                    ui.add_space(theme::SPACE_SM);
+                    card(ui, |ui| {
+                        if let Some(idx) = self.selected_op {
+                            if let Some(op) = self.stack.operations().get(idx) {
+                                ui.label(
+                                    egui::RichText::new(format!("Op [{idx}] · {}", op.tag()))
+                                        .size(theme::SIZE_BODY)
+                                        .color(theme::op_color(op.tag()))
+                                        .strong(),
+                                );
+                            }
+                        } else {
+                            ui.label(
+                                egui::RichText::new(
+                                    "Click an op in the 3D graph to inspect it here.",
+                                )
+                                .color(theme::TEXT_MUTED)
+                                .italics()
+                                .size(theme::SIZE_SMALL),
+                            );
+                        }
+                    });
                     return;
                 }
                 if self.tool_mode == ToolMode::Help {
@@ -3138,7 +3198,12 @@ impl eframe::App for App {
 
         // Help overlay: shortcuts AND experiment recipes.
         if self.show_help {
-            egui::Window::new("GraphNet help  (Esc / H to close)")
+            let avail_h = ctx.screen_rect().height();
+            let mut help_open = self.show_help;
+            egui::Window::new("GraphNet help")
+                .open(&mut help_open) // ← gives the title-bar × button
+                .max_height(avail_h - 80.0)
+                .max_width(720.0)
                 .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
                 .collapsible(false)
                 .resizable(false)
@@ -3150,7 +3215,41 @@ impl eframe::App for App {
                         .inner_margin(egui::Margin::same(theme::SPACE_XL)),
                 )
                 .show(ctx, |ui| {
-                    ui.set_min_width(560.0);
+                    ui.set_min_width(540.0);
+                    // Big "Close" button + tutorial/demo launch row at top.
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("✕ Close")
+                                        .size(theme::SIZE_BODY)
+                                        .strong(),
+                                )
+                                .fill(theme::ACCENT_PURPLE)
+                                .min_size(egui::vec2(90.0, 32.0)),
+                            )
+                            .clicked()
+                        {
+                            self.show_help = false;
+                        }
+                        if mini_button(ui, "📖 Replay tutorial", theme::ACCENT_BLUE)
+                            .clicked()
+                        {
+                            self.walkthrough_step = Some(0);
+                            self.show_help = false;
+                        }
+                        if mini_button(ui, "🎬 Run demo", theme::ACCENT_MID).clicked() {
+                            if self.demo.is_none() {
+                                self.start_demo();
+                            }
+                            self.show_help = false;
+                        }
+                    });
+                    ui.separator();
+                    egui::ScrollArea::vertical()
+                        .max_height(avail_h - 220.0)
+                        .auto_shrink([false; 2])
+                        .show(ui, |ui| {
                     ui.label(
                         egui::RichText::new("Keyboard shortcuts")
                             .size(theme::SIZE_H2)
@@ -3281,7 +3380,12 @@ impl eframe::App for App {
                         );
                         ui.add_space(theme::SPACE_XS);
                     }
+                    }); // close ScrollArea
                 });
+            // honor the title-bar × button.
+            if !help_open {
+                self.show_help = false;
+            }
         }
 
         // Right panel: action log + sparklines + per-op inspector.
@@ -3297,6 +3401,28 @@ impl eframe::App for App {
                     .inner_margin(egui::Margin::same(theme::SPACE_LG)),
             )
             .show(ctx, |ui| {
+                // IDE-style header bar with close ×.
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("Inspector")
+                            .size(theme::SIZE_TINY)
+                            .color(theme::ACCENT_PURPLE)
+                            .strong(),
+                    );
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            if ui
+                                .small_button("×")
+                                .on_hover_text("close panel (Shift+Tab to re-open)")
+                                .clicked()
+                            {
+                                self.show_right_panel = false;
+                            }
+                        },
+                    );
+                });
+                ui.separator();
                 egui::ScrollArea::vertical()
                     .auto_shrink([false; 2])
                     .max_height(f32::INFINITY)
@@ -3840,6 +3966,127 @@ impl eframe::App for App {
                 self.arch_yaw = yaw;
                 self.arch_pitch = pitch;
                 self.arch_roll = roll;
+
+                // Inline editor for the currently-selected op (3D graph).
+                // Floats just below the architecture card.
+                if let Some(sel_idx) = self.selected_op {
+                    if sel_idx < self.stack.len() {
+                        let tag = self.stack.operations()[sel_idx].tag().to_string();
+                        let colour = theme::op_color(&tag);
+                        ui.add_space(theme::SPACE_SM);
+                        card(ui, |ui| {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(
+                                    egui::RichText::new(format!("✎ Selected [{sel_idx}] {tag}"))
+                                        .size(theme::SIZE_BODY)
+                                        .color(colour)
+                                        .strong(),
+                                );
+                                ui.add_space(theme::SPACE_MD);
+                                if matches!(tag.as_str(), "dense" | "hrr_bind" | "permute") {
+                                    if mini_button(ui, "⟳ reseed", colour).clicked() {
+                                        self.reseed_op(sel_idx);
+                                    }
+                                }
+                                if mini_button(ui, "⎘ duplicate", theme::ACCENT_BLUE).clicked() {
+                                    if let Some(op) = self.stack.operations().get(sel_idx).cloned()
+                                    {
+                                        self.push_undo();
+                                        self.stack.insert_operation(sel_idx + 1, op);
+                                        self.set_status(format!(
+                                            "duplicated op [{sel_idx}]"
+                                        ));
+                                    }
+                                }
+                                if mini_button(ui, "↑ up", theme::TEXT_MUTED).clicked()
+                                    && sel_idx > 0
+                                {
+                                    self.push_undo();
+                                    self.stack.move_operation(sel_idx, sel_idx - 1);
+                                    self.selected_op = Some(sel_idx - 1);
+                                }
+                                if mini_button(ui, "↓ down", theme::TEXT_MUTED).clicked()
+                                    && sel_idx + 1 < self.stack.len()
+                                {
+                                    self.push_undo();
+                                    self.stack.move_operation(sel_idx, sel_idx + 1);
+                                    self.selected_op = Some(sel_idx + 1);
+                                }
+                                if mini_button(ui, "× remove", theme::ACCENT_PURPLE).clicked() {
+                                    self.remove_op(sel_idx);
+                                    self.selected_op = None;
+                                }
+                            });
+                            ui.add_space(theme::SPACE_XS);
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(
+                                    egui::RichText::new("convert to:")
+                                        .color(theme::TEXT_MUTED)
+                                        .size(theme::SIZE_SMALL),
+                                );
+                                for new_kind in
+                                    ["identity", "dense", "hrr_bind", "permute", "negate"]
+                                {
+                                    if new_kind == tag {
+                                        continue;
+                                    }
+                                    if mini_button(ui, new_kind, theme::op_color(new_kind))
+                                        .clicked()
+                                    {
+                                        let seed = (sel_idx as u64)
+                                            .wrapping_mul(31)
+                                            .wrapping_add(1_000);
+                                        let new_op = match new_kind {
+                                            "identity" => Operation::Identity,
+                                            "dense" => Operation::Dense {
+                                                key: Hypervector::random_seeded(self.dim, seed),
+                                            },
+                                            "hrr_bind" => Operation::HrrBind {
+                                                key: Hypervector::random_seeded(
+                                                    self.dim,
+                                                    seed + 100,
+                                                ),
+                                            },
+                                            "permute" => Operation::Permute {
+                                                shift: ((seed as usize).wrapping_mul(7) + 13)
+                                                    % self.dim.max(1),
+                                            },
+                                            "negate" => Operation::Negate,
+                                            _ => Operation::Identity,
+                                        };
+                                        self.push_undo();
+                                        self.stack.replace_operation(sel_idx, new_op);
+                                        self.set_status(format!(
+                                            "converted [{sel_idx}] → {new_kind}"
+                                        ));
+                                    }
+                                }
+                            });
+                        });
+                    }
+                }
+
+                // Quick-add palette right under the 3D graph — drag-drop UX
+                // for adding new ops without leaving the central view.
+                ui.add_space(theme::SPACE_SM);
+                card(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(
+                            egui::RichText::new("➕ Add op to graph:")
+                                .size(theme::SIZE_SMALL)
+                                .color(theme::TEXT_MUTED),
+                        );
+                        for kind in ["identity", "dense", "hrr_bind", "permute", "negate"] {
+                            if mini_button(ui, kind, theme::op_color(kind))
+                                .on_hover_text(format!("click to add {kind} to the stack"))
+                                .clicked()
+                            {
+                                self.add_op(kind);
+                            }
+                        }
+                    });
+                });
+
                 if let Some(action) = toolbar_action {
                     match action {
                         ArchToolAction::Reset => {
@@ -4900,12 +5147,14 @@ fn architecture_graph_3d(
                 if is_selected {
                     // Selected: solid colour with subtle outer glow.
                     painter.circle_filled(*pos, r + 4.0, colour.gamma_multiply(0.25));
-                    shaded_node(&painter, *pos, r, colour, &format!("[{i}]\n{tag}"), size_mul);
+                    shaded_node(&painter, *pos, r, colour, &format!("[{i}]"), size_mul);
                 } else {
                     // Dim: radial-gradient on dimmed colour.
                     let dim_col = colour.gamma_multiply(0.7);
-                    shaded_node(&painter, *pos, r, dim_col, &format!("[{i}]\n{tag}"), size_mul);
+                    shaded_node(&painter, *pos, r, dim_col, &format!("[{i}]"), size_mul);
                 }
+                // Symbolic glyph in the upper-right of the node (#756).
+                draw_op_glyph(&painter, *pos, r, tag, size_mul);
                 painter.circle_stroke(
                     *pos,
                     r,
@@ -4982,6 +5231,111 @@ fn architecture_graph_3d(
     );
 
     (clicked, yaw, pitch, roll, tool_action)
+}
+
+/// Draw a small symbolic glyph for an op kind. Reinforces the "creature
+/// has a personality" feel beyond the index/tag label (#756).
+fn draw_op_glyph(
+    painter: &egui::Painter,
+    pos: egui::Pos2,
+    r: f32,
+    tag: &str,
+    size_mul: f32,
+) {
+    let glyph_r = r * 0.55;
+    let pos = egui::pos2(pos.x, pos.y + r * 0.55);
+    let stroke = egui::Stroke::new(1.4 * size_mul, egui::Color32::WHITE);
+    match tag {
+        "identity" => {
+            // Horizontal arrow → (passthrough)
+            painter.line_segment(
+                [
+                    egui::pos2(pos.x - glyph_r * 0.6, pos.y),
+                    egui::pos2(pos.x + glyph_r * 0.6, pos.y),
+                ],
+                stroke,
+            );
+            painter.line_segment(
+                [
+                    egui::pos2(pos.x + glyph_r * 0.3, pos.y - glyph_r * 0.3),
+                    egui::pos2(pos.x + glyph_r * 0.6, pos.y),
+                ],
+                stroke,
+            );
+            painter.line_segment(
+                [
+                    egui::pos2(pos.x + glyph_r * 0.3, pos.y + glyph_r * 0.3),
+                    egui::pos2(pos.x + glyph_r * 0.6, pos.y),
+                ],
+                stroke,
+            );
+        }
+        "dense" => {
+            // Diamond/crystal facets
+            let pts = [
+                egui::pos2(pos.x, pos.y - glyph_r * 0.5),
+                egui::pos2(pos.x + glyph_r * 0.5, pos.y),
+                egui::pos2(pos.x, pos.y + glyph_r * 0.5),
+                egui::pos2(pos.x - glyph_r * 0.5, pos.y),
+            ];
+            for i in 0..4 {
+                painter.line_segment([pts[i], pts[(i + 1) % 4]], stroke);
+            }
+            painter.line_segment([pts[0], pts[2]], stroke);
+        }
+        "hrr_bind" => {
+            // Spiral approximation (3 arcs)
+            let n = 24;
+            let mut prev = pos;
+            for k in 1..=n {
+                let t = (k as f32) / (n as f32);
+                let theta = t * std::f32::consts::TAU * 1.5;
+                let rr = glyph_r * 0.5 * (1.0 - t * 0.5);
+                let p = egui::pos2(pos.x + theta.cos() * rr, pos.y + theta.sin() * rr);
+                if k > 1 {
+                    painter.line_segment([prev, p], stroke);
+                }
+                prev = p;
+            }
+        }
+        "permute" => {
+            // Curved arrow loop
+            let n = 16;
+            let mut prev = egui::pos2(pos.x + glyph_r * 0.5, pos.y);
+            for k in 1..=n {
+                let t = (k as f32) / (n as f32);
+                let theta = t * std::f32::consts::TAU * 0.8;
+                let p = egui::pos2(
+                    pos.x + glyph_r * 0.5 * theta.cos(),
+                    pos.y + glyph_r * 0.5 * theta.sin(),
+                );
+                painter.line_segment([prev, p], stroke);
+                prev = p;
+            }
+            // arrowhead
+            painter.line_segment(
+                [
+                    prev,
+                    egui::pos2(prev.x + glyph_r * 0.18, prev.y - glyph_r * 0.18),
+                ],
+                stroke,
+            );
+        }
+        "negate" => {
+            // Sine-wave inverter
+            let n = 16;
+            let mut prev = egui::pos2(pos.x - glyph_r * 0.6, pos.y);
+            for k in 1..=n {
+                let t = (k as f32) / (n as f32);
+                let x = pos.x - glyph_r * 0.6 + t * glyph_r * 1.2;
+                let y = pos.y + (t * std::f32::consts::TAU).sin() * glyph_r * 0.35;
+                let p = egui::pos2(x, y);
+                painter.line_segment([prev, p], stroke);
+                prev = p;
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Paint a node with a fake radial gradient (3D-sphere illusion).
