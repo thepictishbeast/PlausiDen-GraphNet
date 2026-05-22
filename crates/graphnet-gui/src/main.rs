@@ -66,6 +66,9 @@ struct App {
     arch_autorotate: bool,
     /// Arch graph zoom factor (1.0 = baseline, 0.5..3.0).
     arch_zoom: f32,
+    /// 3D arch layout: Linear (horizontal flow) | Radial (concentric rings)
+    /// | Hierarchical (depth tree). User-toggleable via View menu.
+    arch_layout: ArchLayout,
     /// Op index currently being dragged in the sidebar (for reorder).
     drag_source: Option<usize>,
     /// Time of the most recent forward — animates particle flow on connectors.
@@ -735,6 +738,7 @@ impl App {
             arch_roll: 0.0,
             arch_autorotate: false,
             arch_zoom: 1.0,
+            arch_layout: ArchLayout::Linear,
             drag_source: None,
             last_forward_at: None,
             action_log: Vec::new(),
@@ -1136,6 +1140,7 @@ impl App {
             if live_mode_flag {
                 ctx.request_repaint();
             }
+            let layout_choice = self.arch_layout;
             let (clicked, new_yaw, new_pitch, new_roll, action) = architecture_graph_3d(
                 ui,
                 &op_tags,
@@ -1150,6 +1155,7 @@ impl App {
                 click_flash,
                 entry_scale,
                 live_mode_flag,
+                layout_choice,
             );
             if let Some(click) = clicked {
                 graph_click = Some(click);
@@ -3000,6 +3006,32 @@ impl eframe::App for App {
                             self.arch_yaw = 0.6;
                             self.arch_pitch = 0.15;
                             ui.close_menu();
+                        }
+                        ui.separator();
+                        ui.label(
+                            egui::RichText::new("3D layout")
+                                .color(theme::TEXT_MUTED)
+                                .size(theme::SIZE_TINY),
+                        );
+                        for layout in [
+                            ArchLayout::Linear,
+                            ArchLayout::Radial,
+                            ArchLayout::KindGrouped,
+                        ] {
+                            let active = self.arch_layout == layout;
+                            let lbl = if active {
+                                format!("● {}", layout.label())
+                            } else {
+                                format!("○ {}", layout.label())
+                            };
+                            if ui.button(lbl).clicked() {
+                                self.arch_layout = layout;
+                                self.log(
+                                    LogSeverity::Info,
+                                    format!("3D layout → {}", layout.label()),
+                                );
+                                ui.close_menu();
+                            }
                         }
                     });
                     ui.menu_button("Tools", |ui| {
@@ -7512,6 +7544,28 @@ enum ArchToolAction {
     ZoomOut,
 }
 
+/// 3D viewport layout strategy. Toggleable via View menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ArchLayout {
+    /// Horizontal flow: INPUT → op₀ → op₁ → … → BUNDLE → OUTPUT.
+    Linear,
+    /// Concentric rings: BUNDLE at center, ops on a circle around it,
+    /// INPUT outside on the left, OUTPUT outside on the right.
+    Radial,
+    /// Polar grid with op kind as ring index — like-kind ops cluster.
+    KindGrouped,
+}
+
+impl ArchLayout {
+    fn label(self) -> &'static str {
+        match self {
+            ArchLayout::Linear => "Linear",
+            ArchLayout::Radial => "Radial",
+            ArchLayout::KindGrouped => "Kind-grouped",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ArchClick {
     Op(usize),
@@ -7536,6 +7590,8 @@ fn architecture_graph_3d(
     entry_scale: Option<(usize, f32)>,
     // When true, BUNDLE node breathes — live-mode indicator.
     live_mode: bool,
+    // Layout strategy.
+    layout: ArchLayout,
 ) -> (Option<ArchClick>, f32, f32, f32, Option<ArchToolAction>) {
     let n_ops = op_tags.len();
     // Iter 126 (#785): 3D viewport is THE focus per owner direction.
@@ -7643,16 +7699,58 @@ fn architecture_graph_3d(
 
     let mut op_screen: Vec<(egui::Pos2, f32)> = Vec::with_capacity(n_ops);
     for (i, tag) in op_tags.iter().enumerate() {
-        // Spread on a circle in the YZ plane.
-        let angle = if n_ops == 1 {
-            0.0
-        } else {
-            std::f32::consts::TAU * (i as f32) / (n_ops as f32)
+        let (x, y, z) = match layout {
+            ArchLayout::Linear => {
+                // Default: spread on a circle in the YZ plane around x=0.
+                let angle = if n_ops == 1 {
+                    0.0
+                } else {
+                    std::f32::consts::TAU * (i as f32) / (n_ops as f32)
+                };
+                let (sa, ca) = angle.sin_cos();
+                (0.0, sa * 0.55, ca * 0.55)
+            }
+            ArchLayout::Radial => {
+                // Concentric: ops arranged on a larger circle in YZ centered at BUNDLE.
+                let angle = if n_ops == 1 {
+                    0.0
+                } else {
+                    std::f32::consts::TAU * (i as f32) / (n_ops as f32)
+                };
+                let (sa, ca) = angle.sin_cos();
+                (0.5, sa * 0.95, ca * 0.95) // larger radius, centered near BUNDLE x=0.5
+            }
+            ArchLayout::KindGrouped => {
+                // Concentric rings — like-kind ops cluster on the same ring.
+                let kind_idx = match tag.as_str() {
+                    "identity" => 0,
+                    "dense" => 1,
+                    "hrr_bind" => 2,
+                    "permute" => 3,
+                    "negate" => 4,
+                    _ => 0,
+                };
+                let ring_r = 0.3 + (kind_idx as f32) * 0.18;
+                // Distribute ops of the same kind around their ring.
+                let same_kind_count = op_tags
+                    .iter()
+                    .filter(|t| t.as_str() == tag.as_str())
+                    .count();
+                let same_kind_idx = op_tags
+                    .iter()
+                    .take(i)
+                    .filter(|t| t.as_str() == tag.as_str())
+                    .count();
+                let angle = if same_kind_count <= 1 {
+                    0.0
+                } else {
+                    std::f32::consts::TAU * (same_kind_idx as f32) / (same_kind_count as f32)
+                };
+                let (sa, ca) = angle.sin_cos();
+                (0.0, sa * ring_r, ca * ring_r)
+            }
         };
-        let (sa, ca) = angle.sin_cos();
-        let y = sa * 0.55;
-        let z = ca * 0.55;
-        let (p, d) = project(0.0, y, z);
+        let (p, d) = project(x, y, z);
         op_screen.push((p, d));
         nodes.push((Node::Op(i, tag.as_str()), p, d));
     }
