@@ -3758,6 +3758,26 @@ impl eframe::App for App {
                         if ui.button("Close").clicked() {
                             close = true;
                         }
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("🎲 Surprise me")
+                                        .size(theme::SIZE_SMALL)
+                                        .color(egui::Color32::WHITE),
+                                )
+                                .fill(theme::ACCENT_MID)
+                                .rounding(egui::Rounding::same(theme::RADIUS_SM)),
+                            )
+                            .on_hover_text("load a random template")
+                            .clicked()
+                        {
+                            let seed = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.subsec_nanos())
+                                .unwrap_or(0) as usize;
+                            let idx = seed % TEMPLATES.len();
+                            load = Some(TEMPLATES[idx].name);
+                        }
                     });
                 });
             if let Some(name) = load {
