@@ -6093,7 +6093,9 @@ impl eframe::App for App {
                 .unwrap_or((WALKTHROUGH_STEPS[0].0, WALKTHROUGH_STEPS[0].1));
             let mut close = false;
             let mut advance = false;
+            let mut window_open = true;
             egui::Window::new(format!("Walkthrough {}/{}", step + 1, WALKTHROUGH_STEPS.len()))
+                .open(&mut window_open)  // ← gives the title-bar × close button
                 .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
                 .collapsible(false)
                 .resizable(false)
@@ -6186,7 +6188,7 @@ impl eframe::App for App {
                     self.walkthrough_step = Some(next);
                 }
             }
-            if close {
+            if close || !window_open {
                 self.dismiss_walkthrough();
             }
         }
