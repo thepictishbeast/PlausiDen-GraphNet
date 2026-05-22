@@ -4458,6 +4458,71 @@ impl eframe::App for App {
                         }
                     });
                     ui.separator();
+                    // Symbolic-formula live preview (#786 + #780 demo) — only
+                    // shown for Novel-AI demo selection.
+                    if self.arch_inspector_selection == ArchInspectorChoice::NovelAiDemo {
+                        ui.separator();
+                        ui.label(
+                            egui::RichText::new("Symbolic layer live eval")
+                                .size(theme::SIZE_SMALL)
+                                .color(theme::ACCENT_PURPLE)
+                                .strong(),
+                        );
+                        // Hard-coded reference matching factories::novel_ai_demo.
+                        let formula = "tanh(W*x + b) + 0.1*sin(t)";
+                        let params = vec![
+                            ("W".to_string(), 1.0_f32),
+                            ("b".to_string(), 0.0_f32),
+                        ];
+                        ui.label(
+                            egui::RichText::new(format!("formula: {formula}"))
+                                .size(theme::SIZE_TINY)
+                                .monospace()
+                                .color(theme::TEXT_PRIMARY),
+                        );
+                        // Plot the formula across x ∈ [-3, 3] at t = current_time
+                        // for instant visual feedback.
+                        let t = (std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs_f64())
+                            .unwrap_or(0.0))
+                            % 6.28;
+                        use egui_plot::{Line, Plot, PlotPoints};
+                        let pts: PlotPoints = (-30..=30)
+                            .map(|i| {
+                                let x = f64::from(i) / 10.0;
+                                let y = Self::eval_symbolic_formula(formula, x, t, &params)
+                                    .unwrap_or(f64::NAN);
+                                [x, y]
+                            })
+                            .collect();
+                        Plot::new("symbolic_preview")
+                            .height(120.0)
+                            .show_axes([true, true])
+                            .show_grid([true, true])
+                            .allow_drag(false)
+                            .allow_zoom(false)
+                            .allow_scroll(false)
+                            .y_axis_label("f(x,t)")
+                            .x_axis_label("x")
+                            .include_y(-2.0)
+                            .include_y(2.0)
+                            .show(ui, |plot_ui| {
+                                plot_ui.line(
+                                    Line::new(pts)
+                                        .color(theme::ACCENT_PURPLE)
+                                        .width(1.5)
+                                        .name("formula"),
+                                );
+                            });
+                        ctx.request_repaint();
+                        ui.label(
+                            egui::RichText::new(format!("t = {t:.2}  (auto-cycles)"))
+                                .size(theme::SIZE_TINY)
+                                .color(theme::TEXT_MUTED),
+                        );
+                    }
+
                     // Attention heatmap (#779 demo) — synthetic 12×12 pattern
                     // when GPT-2-small or transformer-block is selected.
                     if matches!(
