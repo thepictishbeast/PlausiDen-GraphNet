@@ -1111,6 +1111,20 @@ impl App {
             self.last_forward_at = Some(std::time::Instant::now());
             self.check_achievements();
             self.play_forward_tone(sim);
+            // Throttled log: every 1st + every 25th forward.
+            if self.forwards == 1
+                || self.forwards.is_multiple_of(25)
+            {
+                self.log(
+                    LogSeverity::Info,
+                    format!(
+                        "⏩ forward #{}: {:.3} ms · cos_sim={}",
+                        self.forwards,
+                        ms,
+                        sim.map(|s| format!("{s:+.3}")).unwrap_or_else(|| "—".into())
+                    ),
+                );
+            }
         }
     }
 
