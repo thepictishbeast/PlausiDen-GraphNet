@@ -65,19 +65,28 @@ pub struct Edge {
 /// Pool kind for [`LayerKind::Pool`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PoolKind {
+    /// Max-pooling — take the maximum value in each window.
     Max,
+    /// Average-pooling — take the arithmetic mean in each window.
     Avg,
+    /// Sum-pooling — accumulate values in each window.
     Sum,
 }
 
 /// Activation kind for [`NodeKind::Activation`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ActKind {
+    /// Rectified Linear Unit: `max(0, x)`.
     Relu,
+    /// Gaussian Error Linear Unit (used in GPT/BERT).
     Gelu,
+    /// Sigmoid Linear Unit / Swish: `x · sigmoid(x)`.
     Silu,
+    /// Hyperbolic tangent.
     Tanh,
+    /// Logistic sigmoid.
     Sigmoid,
+    /// Softmax — normalize to a probability distribution.
     Softmax,
 }
 
@@ -85,6 +94,12 @@ pub enum ActKind {
 /// dimensions / hyperparameters but NOT the weight tensors themselves —
 /// weights live in the `params` field of [`Node::Layer`] (Phase 4 will
 /// promote these to candle Tensors).
+///
+/// Field-level docs intentionally omitted — the field names (in_dim,
+/// out_dim, in_channels, kernel, etc.) are self-explanatory + standard
+/// across ML literature. Per-variant struct fields = explicit
+/// `#[allow(missing_docs)]`.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LayerKind {
     /// Fully-connected: `out = input @ W + b`.
@@ -263,6 +278,10 @@ impl LayerKind {
 }
 
 /// What a node represents.
+///
+/// Field-level docs intentionally omitted on struct-form variants —
+/// `shape` / `dtype` / `kind` are self-explanatory.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum NodeKind {
     /// Network input (tensor placeholder).
@@ -454,6 +473,7 @@ impl NeuralGraph {
 /// render. None of these actually run inference yet (that's Phase 4 with
 /// candle absorption). They exist so the 300-node viz (#774) and 2D/3D
 /// toggle (#775) have meaningful graphs to render.
+#[allow(missing_docs)]
 pub mod factories {
     use super::*;
 

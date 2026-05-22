@@ -244,7 +244,10 @@ struct AudioState {
     _placeholder: (),
 }
 
-/// Summary of a loaded .safetensors file.
+/// Summary of a loaded .safetensors file. Only `tensor_count` is read
+/// from the UI today; the other fields are populated for future use
+/// (Phase 4 will surface them in the architecture inspector).
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct SafetensorsInfo {
     path: std::path::PathBuf,
@@ -8146,16 +8149,13 @@ fn architecture_graph_3d(
         } else if contrib_mag > 0.1 {
             // Blend op color with text muted by contribution magnitude.
             let op_c = theme::op_color(&op_tags[i]);
+            let blend = |a: u8, b: u8| -> u8 {
+                (a as f32 * contrib_mag + b as f32 * (1.0 - contrib_mag)) as u8
+            };
             egui::Color32::from_rgba_unmultiplied(
-                ((op_c.r() as f32 * contrib_mag
-                    + theme::TEXT_MUTED.r() as f32 * (1.0 - contrib_mag))
-                    as u8),
-                ((op_c.g() as f32 * contrib_mag
-                    + theme::TEXT_MUTED.g() as f32 * (1.0 - contrib_mag))
-                    as u8),
-                ((op_c.b() as f32 * contrib_mag
-                    + theme::TEXT_MUTED.b() as f32 * (1.0 - contrib_mag))
-                    as u8),
+                blend(op_c.r(), theme::TEXT_MUTED.r()),
+                blend(op_c.g(), theme::TEXT_MUTED.g()),
+                blend(op_c.b(), theme::TEXT_MUTED.b()),
                 255,
             )
         } else {
