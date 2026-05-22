@@ -107,6 +107,8 @@ struct App {
     font_scale: f32,
     /// Demo pace in seconds per template.
     demo_pace_sec: f64,
+    /// Most recently mutated op index + timestamp (drives diff halo #718).
+    recent_change: Option<(usize, std::time::Instant)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -549,6 +551,7 @@ impl App {
             adaptive_hint: None,
             font_scale: 1.0,
             demo_pace_sec: 2.5,
+            recent_change: None,
         };
         app.load_template("standard");
         // Try to restore previous session.
@@ -693,7 +696,9 @@ impl App {
 
     fn add_op(&mut self, kind: &str) {
         self.push_undo();
+        let new_idx = self.stack.len();
         let seed = self.stack.len() as u64 + 100;
+        self.recent_change = Some((new_idx, std::time::Instant::now()));
         let op = match kind {
             "identity" => Operation::Identity,
             "dense" => Operation::Dense {
@@ -724,6 +729,7 @@ impl App {
             return;
         }
         self.push_undo();
+        self.recent_change = Some((idx, std::time::Instant::now()));
         let tag = self.stack.operations()[idx].tag().to_string();
         self.reseed_counter = self.reseed_counter.wrapping_add(1);
         let new_seed = 9_000 + self.reseed_counter * 7 + idx as u64;
@@ -2109,8 +2115,25 @@ impl eframe::App for App {
                 let mut to_convert: Option<(usize, &'static str)> = None;
                 let mut drag_drop_target: Option<usize> = None;
                 let drag_active = self.drag_source.is_some();
+                let recent_change = self.recent_change;
                 for (idx, tag) in &ops {
                     let key_preview = self.op_key(*idx);
+                    // Diff halo: pulse for 1.0s on the most-recently-mutated op.
+                    let halo = recent_change.and_then(|(rc_idx, t)| {
+                        if rc_idx == *idx {
+                            let age = t.elapsed().as_secs_f32();
+                            if age < 1.0 {
+                                Some(1.0 - age)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    });
+                    if halo.is_some() {
+                        ctx.request_repaint();
+                    }
                     let action = op_chip_actions_with_drag(
                         ui,
                         *idx,
@@ -2118,6 +2141,7 @@ impl eframe::App for App {
                         self.drag_source == Some(*idx),
                         drag_active,
                         key_preview.as_ref(),
+                        halo,
                     );
                     if action.remove {
                         to_remove = Some(*idx);
@@ -3476,6 +3500,7 @@ fn op_chip_actions_with_drag(
     is_being_dragged: bool,
     drag_active: bool,
     key_preview: Option<&Hypervector>,
+    halo: Option<f32>,
 ) -> OpChipAction {
     let mut action = OpChipAction::default();
     let bg = theme::op_color(tag).gamma_multiply(if is_being_dragged { 0.6 } else { 0.25 });
@@ -3539,6 +3564,21 @@ fn op_chip_actions_with_drag(
             });
         })
         .response;
+    // Diff halo — recent-mutation pulse.
+    if let Some(intensity) = halo {
+        let halo_col = egui::Color32::from_rgba_unmultiplied(
+            0xE0,
+            0xB1,
+            0x5B,
+            (intensity * 200.0) as u8,
+        );
+        ui.painter().rect_stroke(
+            resp.rect.expand(3.0),
+            egui::Rounding::same(theme::RADIUS_PILL),
+            egui::Stroke::new(2.5, halo_col),
+        );
+    }
+
     // Whole-row drag detection.
     let row_resp = ui.interact(resp.rect, egui::Id::new(("op_chip_drag", idx)), egui::Sense::drag());
     if row_resp.drag_started() {
