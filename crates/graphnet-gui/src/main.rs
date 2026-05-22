@@ -736,6 +736,7 @@ impl App {
     }
 
     fn dismiss_walkthrough(&mut self) {
+        let was_in_tour = self.walkthrough_step.is_some();
         self.walkthrough_step = None;
         let marker = persistent_state_path()
             .parent()
@@ -745,6 +746,13 @@ impl App {
             let _ = std::fs::create_dir_all(parent);
         }
         let _ = std::fs::write(&marker, b"1");
+        if was_in_tour {
+            self.log(
+                LogSeverity::Success,
+                "🎓 tutorial complete — press H for help any time".to_string(),
+            );
+            self.set_status("✓ Tour complete!".to_string());
+        }
     }
 
     fn start_demo(&mut self) {
@@ -756,9 +764,19 @@ impl App {
             paused_offset: 0.0,
         });
         self.set_status(format!(
-            "Demo started — cycling templates ({:.1}s each)",
+            "Demo started — cycling {} templates ({:.1}s each)",
+            TEMPLATES.len(),
             self.demo_pace_sec
         ));
+        self.log(
+            LogSeverity::Success,
+            format!(
+                "🎬 demo started — {} templates @ {:.1}s each ({:.0}s total)",
+                TEMPLATES.len(),
+                self.demo_pace_sec,
+                TEMPLATES.len() as f64 * self.demo_pace_sec
+            ),
+        );
     }
 
     fn demo_pause_toggle(&mut self) {
@@ -811,7 +829,10 @@ impl App {
         if target_idx != demo.template_idx {
             let t = TEMPLATES[target_idx].name;
             self.load_template(t);
-            self.run_forward();
+            // Run multiple forwards so the user sees output update live.
+            for _ in 0..3 {
+                self.run_forward();
+            }
             self.set_status(format!(
                 "Demo step {}/{}: {} — {}",
                 target_idx + 1,
@@ -819,6 +840,17 @@ impl App {
                 t,
                 TEMPLATES[target_idx].summary
             ));
+            self.log(
+                LogSeverity::Info,
+                format!(
+                    "🎬 demo step {}/{} → {} ({} ops, dim={})",
+                    target_idx + 1,
+                    TEMPLATES.len(),
+                    t,
+                    self.stack.len(),
+                    self.dim
+                ),
+            );
             if let Some(d) = self.demo.as_mut() {
                 d.template_idx = target_idx;
             }
