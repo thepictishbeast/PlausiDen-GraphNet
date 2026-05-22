@@ -649,7 +649,7 @@ impl App {
             drag_source: None,
             last_forward_at: None,
             action_log: Vec::new(),
-            tool_mode: ToolMode::Templates,
+            tool_mode: ToolMode::Edit,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             template_filter: String::new(),
@@ -4327,6 +4327,13 @@ impl eframe::App for App {
                 let mut roll = self.arch_roll;
                 let mut toolbar_action: Option<ArchToolAction> = None;
                 card(ui, |ui| {
+                    let contrib_vec: Option<Vec<f64>> = self.last_trace.as_ref().map(|t| {
+                        t.per_op
+                            .iter()
+                            .map(|o| cos_sim(&o.output, &t.bundled).unwrap_or(0.0))
+                            .collect()
+                    });
+                    let contrib_slice = contrib_vec.as_deref();
                     let (clicked, new_yaw, new_pitch, new_roll, action) =
                         architecture_graph_3d(
                             ui,
@@ -4338,6 +4345,7 @@ impl eframe::App for App {
                             zoom,
                             autorotate_state,
                             particle_phase,
+                            contrib_slice,
                         );
                     if let Some(idx) = clicked {
                         graph_click = Some(idx);
@@ -5360,6 +5368,7 @@ fn architecture_graph_3d(
     zoom: f32,
     autorotate: bool,
     particle_phase: Option<f32>,
+    contributions: Option<&[f64]>,
 ) -> (Option<usize>, f32, f32, f32, Option<ArchToolAction>) {
     let n_ops = op_tags.len();
     let height = 360.0_f32;
@@ -5373,6 +5382,7 @@ fn architecture_graph_3d(
     let mut yaw = yaw_in;
     let mut pitch = pitch_in;
     let mut roll = roll_in;
+    let mut zoom_adjust: f32 = 0.0;
     if response.dragged() {
         let mods = ui.input(|i| i.modifiers);
         if mods.shift {
@@ -5382,6 +5392,25 @@ fn architecture_graph_3d(
             pitch += response.drag_delta().y * 0.015;
             pitch = pitch.clamp(-1.2, 1.2);
         }
+    }
+    // Scroll-wheel zoom when cursor is over the viewport.
+    if response.hovered() {
+        let (scroll_y, zoom_delta) =
+            ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
+        if scroll_y.abs() > 0.5 || (zoom_delta - 1.0).abs() > 0.01 {
+            zoom_adjust = scroll_y * 0.005 + (zoom_delta - 1.0) * 0.5;
+        }
+    }
+    // Numpad / digit axis-aligned snaps (only when viewport hovered).
+    if response.hovered() {
+        ui.input(|i| {
+            if i.key_pressed(egui::Key::F) {
+                // F = focus reset (camera back to default but keep zoom).
+                yaw = 0.6;
+                pitch = 0.15;
+                roll = 0.0;
+            }
+        });
     }
 
     // 3D camera: input at x=-1, bundle at x=+0.8, output at x=+1.2.
@@ -5449,12 +5478,36 @@ fn architecture_graph_3d(
     for (i, (op_pos, op_d)) in op_screen.iter().enumerate() {
         // Connector colour: muted unless selected.
         let is_selected = selected == Some(i);
+        // Line weight by per-op contribution magnitude (when trace exists).
+        let contrib_mag = contributions
+            .and_then(|c| c.get(i))
+            .map(|s| s.abs().min(1.0) as f32)
+            .unwrap_or(0.0);
         let colour = if is_selected {
             theme::op_color(&op_tags[i])
+        } else if contrib_mag > 0.1 {
+            // Blend op color with text muted by contribution magnitude.
+            let op_c = theme::op_color(&op_tags[i]);
+            egui::Color32::from_rgba_unmultiplied(
+                ((op_c.r() as f32 * contrib_mag
+                    + theme::TEXT_MUTED.r() as f32 * (1.0 - contrib_mag))
+                    as u8),
+                ((op_c.g() as f32 * contrib_mag
+                    + theme::TEXT_MUTED.g() as f32 * (1.0 - contrib_mag))
+                    as u8),
+                ((op_c.b() as f32 * contrib_mag
+                    + theme::TEXT_MUTED.b() as f32 * (1.0 - contrib_mag))
+                    as u8),
+                255,
+            )
         } else {
             theme::TEXT_MUTED
         };
-        let stroke_w = if is_selected { 1.8 } else { 1.0 };
+        let stroke_w = if is_selected {
+            1.8
+        } else {
+            1.0 + contrib_mag * 2.0
+        };
         // INPUT → op
         painter.line_segment([p_in, *op_pos], egui::Stroke::new(stroke_w, colour));
         // op → BUNDLE
@@ -5605,14 +5658,24 @@ fn architecture_graph_3d(
         tool_action = Some(ArchToolAction::ZoomOut);
     }
 
-    // Hint text.
+    // Hint text — updated for new shortcuts.
     painter.text(
         egui::pos2(rect.min.x + 6.0, rect.max.y - 6.0),
         egui::Align2::LEFT_BOTTOM,
-        "drag = yaw/pitch · shift+drag = roll · click op = select · toolbar top-left",
+        "drag = yaw/pitch · shift+drag = roll · scroll = zoom · F = reset rotation · click op = select",
         egui::FontId::proportional(theme::SIZE_TINY),
         theme::TEXT_DIM,
     );
+
+    // Apply the scroll-wheel zoom adjustment via the action channel — the
+    // caller already routes zoom through ArchToolAction. Translate here.
+    if zoom_adjust.abs() > 0.001 && tool_action.is_none() {
+        tool_action = Some(if zoom_adjust > 0.0 {
+            ArchToolAction::ZoomIn
+        } else {
+            ArchToolAction::ZoomOut
+        });
+    }
 
     (clicked, yaw, pitch, roll, tool_action)
 }
