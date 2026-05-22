@@ -3462,7 +3462,8 @@ fn card(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
 }
 
 fn mini_button(ui: &mut egui::Ui, text: &str, accent: egui::Color32) -> egui::Response {
-    ui.add(
+    // Animated hover: brighter fill + bolder stroke on hover.
+    let resp = ui.add(
         egui::Button::new(
             egui::RichText::new(text)
                 .size(theme::SIZE_SMALL)
@@ -3472,7 +3473,27 @@ fn mini_button(ui: &mut egui::Ui, text: &str, accent: egui::Color32) -> egui::Re
         .fill(accent.gamma_multiply(0.18))
         .stroke(egui::Stroke::new(1.0, accent))
         .rounding(egui::Rounding::same(theme::RADIUS_SM)),
-    )
+    );
+    if resp.hovered() {
+        // Subtle highlight ring around the button to "lift" it visually.
+        ui.painter().rect_stroke(
+            resp.rect.expand(1.5),
+            egui::Rounding::same(theme::RADIUS_SM),
+            egui::Stroke::new(1.0, accent.gamma_multiply(0.6)),
+        );
+    }
+    resp
+}
+
+/// Ease in-out cubic, t in [0, 1] → eased value in [0, 1].
+#[allow(dead_code)]
+fn ease_in_out_cubic(t: f32) -> f32 {
+    if t < 0.5 {
+        4.0 * t * t * t
+    } else {
+        let s = 2.0 * t - 2.0;
+        1.0 + s * s * s / 2.0
+    }
 }
 
 #[derive(Default)]
