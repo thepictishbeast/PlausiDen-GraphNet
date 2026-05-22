@@ -5949,6 +5949,21 @@ fn architecture_graph_3d(
                     // Selected: solid colour with subtle outer glow.
                     painter.circle_filled(*pos, r + 4.0, colour.gamma_multiply(0.25));
                     shaded_node(&painter, *pos, r, colour, &format!("[{i}]"), size_mul);
+                    // Animated "▼" marker above the selected node — bobs.
+                    let bob = (std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs_f32())
+                        .unwrap_or(0.0)
+                        * 3.0)
+                        .sin()
+                        * 3.0;
+                    painter.text(
+                        egui::pos2(pos.x, pos.y - r - 18.0 + bob),
+                        egui::Align2::CENTER_CENTER,
+                        "▼",
+                        egui::FontId::proportional(14.0),
+                        colour,
+                    );
                 } else {
                     // Dim: radial-gradient on dimmed colour.
                     let dim_col = colour.gamma_multiply(0.7);
