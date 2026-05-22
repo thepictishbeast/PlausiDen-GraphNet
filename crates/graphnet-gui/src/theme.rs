@@ -88,37 +88,38 @@ pub fn install(ctx: &egui::Context) {
     install_dark(ctx);
 }
 
-/// Register the Phosphor icon font alongside the default fonts so we can
-/// use phosphor icon glyphs anywhere in the UI. Also installs the
-/// NotoSansSymbols fonts so that arrows (← → ↑ ↓), math symbols
-/// (∀ ∃ Σ π), and miscellaneous Unicode (★ ♦ ◆) all render instead
-/// of showing as squares.
+/// Register the Phosphor icon font alongside the default fonts. Also
+/// installs Symbola — a single ~3 MB font that covers nearly the entire
+/// BMP plus large swaths of supplementary planes (arrows, math
+/// operators, dingbats, miscellaneous symbols, geometric shapes, AND
+/// pictographic emoji 📋 📂 💾 🖼 🎥 🧠 🎯 🎬 etc. as monochrome
+/// glyphs).
+///
+/// Why Symbola (not Noto): the Debian-packaged NotoSansSymbols subset
+/// is missing arrows U+2190-21FF entirely (verified empirically by
+/// reading the cmap). Symbola covers them all PLUS most emoji as
+/// monochrome shapes. Trade-off: 3 MB of binary bloat for universal
+/// glyph coverage.
 fn install_phosphor_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
 
-    // NotoSansSymbols — arrows, Greek, math operators, currency, etc.
     fonts.font_data.insert(
-        "noto_symbols".to_owned(),
-        egui::FontData::from_static(include_bytes!(
-            "../assets/NotoSansSymbols-Regular.ttf"
-        )),
+        "symbola".to_owned(),
+        egui::FontData::from_static(include_bytes!("../assets/Symbola.ttf")),
     );
-    // NotoSansSymbols2 — pictographs, geometric shapes, dingbats, more
-    // miscellaneous symbols. The two combined cover virtually every
-    // non-emoji unicode point used in a UI.
-    fonts.font_data.insert(
-        "noto_symbols2".to_owned(),
-        egui::FontData::from_static(include_bytes!(
-            "../assets/NotoSansSymbols2-Regular.ttf"
-        )),
-    );
-    // Append symbol fonts AFTER the default proportional + emoji fonts,
-    // so they only kick in for glyphs the primary fonts can't render.
+    // Insert Symbola at SECOND-HIGHEST priority — right after the
+    // default proportional/monospace primary, BEFORE NotoEmoji (which
+    // renders a placeholder square for missing emoji and would block
+    // Symbola from being consulted).
     for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
         let list = fonts.families.entry(family).or_default();
-        list.push("noto_symbols".to_owned());
-        list.push("noto_symbols2".to_owned());
+        // Slot symbola at index 1 (after the primary font).
+        if list.len() >= 1 {
+            list.insert(1, "symbola".to_owned());
+        } else {
+            list.push("symbola".to_owned());
+        }
     }
     ctx.set_fonts(fonts);
 }

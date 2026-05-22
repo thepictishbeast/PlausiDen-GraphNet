@@ -280,7 +280,7 @@ impl ArchInspectorChoice {
             ArchInspectorChoice::TransformerBlock => "Transformer block",
             ArchInspectorChoice::ResnetBasicBlock => "ResNet-18 basic block",
             ArchInspectorChoice::CurrentHdcStack => "Current HDC stack",
-            ArchInspectorChoice::NovelAiDemo => "🧪 Novel-AI demo",
+            ArchInspectorChoice::NovelAiDemo => "⚗ Novel-AI demo",
         }
     }
 }
@@ -3614,7 +3614,7 @@ impl eframe::App for App {
                 }
                 // Creature name from op composition (game-feel).
                 ui.label(
-                    egui::RichText::new(format!("🧬 {}", self.creature_name()))
+                    egui::RichText::new(format!("✺ {}", self.creature_name()))
                         .size(theme::SIZE_SMALL)
                         .color(theme::ACCENT_PURPLE)
                         .italics(),
@@ -5755,17 +5755,25 @@ impl eframe::App for App {
                             }
                         });
                     ui.separator();
+                    ui.add_space(2.0);
                     ui.horizontal(|ui| {
+                        // Bright cyan prompt, padded.
+                        ui.add_space(4.0);
                         ui.label(
-                            egui::RichText::new(">")
+                            egui::RichText::new("›")
                                 .color(theme::ACCENT_BLUE)
                                 .strong()
+                                .size(theme::SIZE_BODY + 2.0)
                                 .monospace(),
                         );
-                        let resp = ui.add(
+                        ui.add_space(4.0);
+                        let run_w = 64.0_f32;
+                        let edit_w = (ui.available_width() - run_w - 8.0).max(80.0);
+                        let resp = ui.add_sized(
+                            egui::vec2(edit_w, 28.0),
                             egui::TextEdit::singleline(&mut self.console_input)
-                                .desired_width(ui.available_width() - 60.0)
-                                .font(egui::TextStyle::Monospace),
+                                .font(egui::TextStyle::Monospace)
+                                .hint_text("type a command + Enter (try 'help')"),
                         );
                         if resp.lost_focus()
                             && ui.input(|i| i.key_pressed(egui::Key::Enter))
@@ -5848,7 +5856,19 @@ impl eframe::App for App {
                                 self.console_input.clear();
                             }
                         }
-                        if ui.button("run").clicked() {
+                        ui.add_space(4.0);
+                        let run_btn = ui.add_sized(
+                            egui::vec2(60.0, 28.0),
+                            egui::Button::new(
+                                egui::RichText::new("Run")
+                                    .size(theme::SIZE_SMALL)
+                                    .color(egui::Color32::WHITE)
+                                    .strong(),
+                            )
+                            .fill(theme::ACCENT_BLUE)
+                            .rounding(egui::Rounding::same(theme::RADIUS_SM)),
+                        );
+                        if run_btn.clicked() {
                             submit = Some(std::mem::take(&mut self.console_input));
                             self.console_history_cursor = -1;
                         }
