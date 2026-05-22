@@ -7789,6 +7789,27 @@ fn architecture_graph_3d(
         } else {
             1.0 + contrib_mag * 2.0
         };
+        // Glow halo for high-contribution edges (image 8 inspired —
+        // cyan/purple cubes with luminous wires). Draws a thicker, more
+        // transparent line UNDER the main line to create a halo.
+        if contrib_mag > 0.15 || is_selected {
+            let glow_w = stroke_w + 4.0 + contrib_mag * 3.0;
+            let glow_alpha = ((contrib_mag * 80.0) + if is_selected { 60.0 } else { 0.0 }) as u8;
+            let glow_colour = egui::Color32::from_rgba_unmultiplied(
+                colour.r(),
+                colour.g(),
+                colour.b(),
+                glow_alpha,
+            );
+            painter.line_segment(
+                [p_in, *op_pos],
+                egui::Stroke::new(glow_w, glow_colour),
+            );
+            painter.line_segment(
+                [*op_pos, p_bundle],
+                egui::Stroke::new(glow_w, glow_colour),
+            );
+        }
         // INPUT → op
         painter.line_segment([p_in, *op_pos], egui::Stroke::new(stroke_w, colour));
         // op → BUNDLE
