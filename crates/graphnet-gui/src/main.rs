@@ -1418,6 +1418,80 @@ impl App {
         }
     }
 
+    /// Generate a "creature name" from the current stack's op composition.
+    /// Per docs/GAME_DESIGN.md — every stack you save is a creature.
+    /// Examples:
+    ///   "id-id-id-dense"               → "Triple-Echo Beetle"
+    ///   "dense-dense-dense-dense"      → "Quad-Crystal Hydra"
+    ///   "hrr_bind-permute-negate"      → "Spiral-Geared Inverter"
+    fn creature_name(&self) -> String {
+        let ops = self.stack.operations();
+        if ops.is_empty() {
+            return "Empty Husk".to_string();
+        }
+        // Count each kind.
+        let mut counts: std::collections::BTreeMap<&str, usize> =
+            std::collections::BTreeMap::new();
+        for op in ops {
+            *counts.entry(op.tag()).or_insert(0) += 1;
+        }
+        // If one kind dominates ≥75%, use the dominant prefix:
+        let total = ops.len();
+        let dominant = counts
+            .iter()
+            .max_by_key(|(_, c)| **c)
+            .map(|(t, c)| (*t, *c));
+        let kind_word = |tag: &str| -> &'static str {
+            match tag {
+                "identity" => "Echo",
+                "dense" => "Crystal",
+                "hrr_bind" => "Spiral",
+                "permute" => "Geared",
+                "negate" => "Inverter",
+                _ => "Unknown",
+            }
+        };
+        let count_word = |n: usize| -> &'static str {
+            match n {
+                1 => "Lone",
+                2 => "Twin",
+                3 => "Triple",
+                4 => "Quad",
+                5 => "Penta",
+                6 => "Hex",
+                7 => "Hepta",
+                8 => "Octa",
+                _ => "Mega",
+            }
+        };
+        let suffix = match total {
+            1 => "Sprout",
+            2..=3 => "Beetle",
+            4..=5 => "Hydra",
+            6..=9 => "Wyrm",
+            _ => "Titan",
+        };
+        if let Some((dom_tag, dom_count)) = dominant {
+            if dom_count * 4 >= total * 3 {
+                return format!(
+                    "{}-{} {suffix}",
+                    count_word(dom_count),
+                    kind_word(dom_tag)
+                );
+            }
+        }
+        // Mixed composition: list 2 most common kinds.
+        let mut kinds: Vec<(&&str, &usize)> = counts.iter().collect();
+        kinds.sort_by(|a, b| b.1.cmp(a.1));
+        let first = kinds.first().map(|(t, _)| kind_word(t)).unwrap_or("Mixed");
+        let second = kinds.get(1).map(|(t, _)| kind_word(t)).unwrap_or("");
+        if second.is_empty() {
+            format!("{first} {suffix}")
+        } else {
+            format!("{first}-{second} {suffix}")
+        }
+    }
+
     /// Compute a human-readable summary of a hypervector (#753).
     fn hv_summary(v: &Hypervector) -> HvSummary {
         let data = v.as_slice();
@@ -1501,8 +1575,11 @@ impl App {
             }
         }
         // Also persist user-prefs settings (#87).
+        // Sorted achievement slug list for stable diff output.
+        let mut ach_keys: Vec<&str> = self.achievements.keys().copied().collect();
+        ach_keys.sort();
         let prefs = format!(
-            "colormap: {}\ntheme_dark: {}\nfont_scale: {}\nworkspace: {}\n",
+            "colormap: {}\ntheme_dark: {}\nfont_scale: {}\nworkspace: {}\nachievements: {}\nobjectives_done: {}\n",
             match self.colormap {
                 Colormap::Bipolar => "bipolar",
                 Colormap::Viridis => "viridis",
@@ -1516,7 +1593,12 @@ impl App {
                 Workspace::Live => "live",
                 Workspace::Compare => "compare",
                 Workspace::Train => "train",
-            }
+            },
+            ach_keys.join(","),
+            self.objective_done
+                .iter()
+                .map(|b| if *b { "1" } else { "0" })
+                .collect::<String>()
         );
         let settings_path = persistent_settings_path();
         let mut prefs_bytes = prefs.len();
@@ -1576,6 +1658,40 @@ impl App {
                             "train" => Workspace::Train,
                             _ => Workspace::Edit,
                         };
+                    }
+                    "achievements" => {
+                        for slug in v.split(',').filter(|s| !s.is_empty()) {
+                            // Static slug list — only restore slugs we recognize
+                            // so a stale file doesn't pollute the achievement map
+                            // with garbage strings.
+                            for known in [
+                                "first_forward",
+                                "ten_forwards",
+                                "hundred_forwards",
+                                "thousand_forwards",
+                                "all_op_kinds",
+                                "all_templates",
+                                "ten_op_stack",
+                                "high_dim",
+                                "low_dim",
+                                "demo_runner",
+                                "undoer",
+                                "high_sim",
+                            ] {
+                                if known == slug {
+                                    self.achievements
+                                        .insert(known, std::time::Instant::now());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    "objectives_done" => {
+                        for (i, ch) in v.chars().enumerate() {
+                            if i < self.objective_done.len() {
+                                self.objective_done[i] = ch == '1';
+                            }
+                        }
                     }
                     _ => {}
                 }
@@ -2502,6 +2618,14 @@ impl eframe::App for App {
                         .size(theme::SIZE_SMALL)
                         .color(theme::ACCENT_BLUE)
                         .strong(),
+                );
+                ui.separator();
+                // Creature name from op composition (game-feel).
+                ui.label(
+                    egui::RichText::new(format!("🧬 {}", self.creature_name()))
+                        .size(theme::SIZE_SMALL)
+                        .color(theme::ACCENT_PURPLE)
+                        .italics(),
                 );
                 ui.separator();
                 ui.label(
