@@ -1338,9 +1338,10 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Force-maximize on first frame — some WMs ignore with_maximized().
-        // We send the viewport command exactly once.
-        if self.forwards == 1 && self.action_log.len() <= 1 {
+        // Force-maximize on EVERY frame until the WM honors it. Some WMs
+        // ignore both with_maximized() AND single-shot Maximized — sending
+        // continuously until self.forwards exceeds 3 ensures it sticks.
+        if self.forwards <= 3 {
             ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
         }
         let mut advance_walkthrough = false;
@@ -1810,6 +1811,9 @@ impl eframe::App for App {
                     .inner_margin(egui::Margin::same(theme::SPACE_LG)),
             )
             .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false; 2])
+                    .show(ui, |ui| {
                 // Mode-aware left panel content.
                 let mode_label = self.tool_mode.label();
                 ui.label(
@@ -2263,6 +2267,7 @@ impl eframe::App for App {
                 if mini_button(ui, "🗑  Reset stack", theme::TEXT_MUTED).clicked() {
                     self.reset_stack();
                 }
+                    }); // close ScrollArea::vertical
             });
 
         // Console / REPL pane (#747) — bottom-docked when shown.
@@ -2457,8 +2462,60 @@ impl eframe::App for App {
             }
         }
 
-        // Walkthrough overlay — first-run tutorial.
+        // Walkthrough overlay — first-run tutorial WITH spotlight on the
+        // current step's relevant UI region (#726).
         if let Some(step) = self.walkthrough_step {
+            // Darken everything except a spotlight rect for the focused region.
+            let screen = ctx.screen_rect();
+            let spotlight_rect = walkthrough_spotlight_rect(step, screen);
+            let painter = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("walkthrough_scrim"),
+            ));
+            // Four scrim rects covering everything except the spotlight.
+            let scrim = egui::Color32::from_black_alpha(160);
+            // top
+            painter.rect_filled(
+                egui::Rect::from_min_max(
+                    screen.min,
+                    egui::pos2(screen.max.x, spotlight_rect.min.y),
+                ),
+                0.0,
+                scrim,
+            );
+            // bottom
+            painter.rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(screen.min.x, spotlight_rect.max.y),
+                    screen.max,
+                ),
+                0.0,
+                scrim,
+            );
+            // left
+            painter.rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(screen.min.x, spotlight_rect.min.y),
+                    egui::pos2(spotlight_rect.min.x, spotlight_rect.max.y),
+                ),
+                0.0,
+                scrim,
+            );
+            // right
+            painter.rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(spotlight_rect.max.x, spotlight_rect.min.y),
+                    egui::pos2(screen.max.x, spotlight_rect.max.y),
+                ),
+                0.0,
+                scrim,
+            );
+            // Spotlight outline.
+            painter.rect_stroke(
+                spotlight_rect,
+                egui::Rounding::same(theme::RADIUS_MD),
+                egui::Stroke::new(2.0, theme::ACCENT_PURPLE),
+            );
             let (title, body) = WALKTHROUGH_STEPS
                 .get(step)
                 .copied()
@@ -3520,6 +3577,57 @@ struct OpChipAction {
 /// Op chip with drag-and-drop reorder support.
 /// `is_being_dragged`: this chip is the drag source (visual feedback).
 /// `drag_active`: SOME chip is being dragged (controls drop-target hover state).
+/// Return the spotlight rect for a given walkthrough step.
+/// Coordinates are heuristic guesses keyed to the panel layout — each step
+/// targets the region the text talks about.
+fn walkthrough_spotlight_rect(step: usize, screen: egui::Rect) -> egui::Rect {
+    // Defaults to the centre.
+    match step {
+        // Step 0: Welcome — full window.
+        0 => screen,
+        // Step 1: Templates list (left panel, top).
+        1 => egui::Rect::from_min_size(
+            egui::pos2(screen.min.x + 44.0, screen.min.y + 56.0),
+            egui::vec2(320.0, 240.0),
+        ),
+        // Step 2: Run forward button (central panel, mid).
+        2 => egui::Rect::from_min_size(
+            egui::pos2(screen.center().x - 200.0, screen.center().y - 30.0),
+            egui::vec2(400.0, 60.0),
+        ),
+        // Step 3: Operations sidebar.
+        3 => egui::Rect::from_min_size(
+            egui::pos2(screen.min.x + 44.0, screen.center().y),
+            egui::vec2(320.0, screen.height() * 0.4),
+        ),
+        // Step 4: Per-op contribution / inspector (right panel).
+        4 => egui::Rect::from_min_size(
+            egui::pos2(screen.max.x - 360.0, screen.center().y - 100.0),
+            egui::vec2(340.0, 300.0),
+        ),
+        // Step 5: 3D arch graph (central panel, bottom).
+        5 => egui::Rect::from_min_size(
+            egui::pos2(screen.center().x - 280.0, screen.max.y - 380.0),
+            egui::vec2(560.0, 340.0),
+        ),
+        // Step 6: Live mode + objectives — right panel objective card.
+        6 => egui::Rect::from_min_size(
+            egui::pos2(screen.max.x - 360.0, screen.min.y + 240.0),
+            egui::vec2(340.0, 180.0),
+        ),
+        // Step 7: Save/Load buttons + console — top right hero region.
+        7 => egui::Rect::from_min_size(
+            egui::pos2(screen.max.x - 320.0, screen.min.y),
+            egui::vec2(320.0, 56.0),
+        ),
+        // Step 8: Help button.
+        _ => egui::Rect::from_min_size(
+            egui::pos2(screen.max.x - 90.0, screen.min.y + 12.0),
+            egui::vec2(78.0, 32.0),
+        ),
+    }
+}
+
 fn op_chip_actions_with_drag(
     ui: &mut egui::Ui,
     idx: usize,
