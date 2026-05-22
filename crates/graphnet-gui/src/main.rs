@@ -1720,6 +1720,8 @@ impl eframe::App for App {
         let mut undo_request = false;
         let mut redo_request = false;
         let mut png_request = false;
+        let mut slot_save_request: Option<usize> = None;
+        let mut slot_recall_request: Option<usize> = None;
         let any_input = ctx.input(|i| {
             i.keys_down.iter().count() > 0 || i.pointer.any_down() || i.pointer.is_moving()
         });
@@ -1764,6 +1766,27 @@ impl eframe::App for App {
             }
             if (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::E) {
                 png_request = true;
+            }
+            // ⌘/Ctrl + digit 1-4 = save current to slot.
+            // ⌘/Ctrl + Shift + digit 1-4 = recall slot.
+            if i.modifiers.command || i.modifiers.ctrl {
+                for (slot_i, k) in [
+                    egui::Key::Num1,
+                    egui::Key::Num2,
+                    egui::Key::Num3,
+                    egui::Key::Num4,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if i.key_pressed(*k) {
+                        if i.modifiers.shift {
+                            slot_recall_request = Some(slot_i);
+                        } else {
+                            slot_save_request = Some(slot_i);
+                        }
+                    }
+                }
             }
             if i.key_pressed(egui::Key::Backtick) {
                 self.show_console = !self.show_console;
@@ -1836,6 +1859,37 @@ impl eframe::App for App {
         }
         if png_request {
             self.export_png();
+        }
+        if let Some(i) = slot_save_request {
+            self.slots[i] = Some(self.stack.clone());
+            self.set_status(format!(
+                "⌘{} → saved current stack to slot {}",
+                i + 1,
+                (b'A' + i as u8) as char
+            ));
+        }
+        if let Some(i) = slot_recall_request {
+            if let Some(s) = self.slots[i].clone() {
+                self.push_undo();
+                self.dim = s.dim();
+                self.stack = s;
+                self.dim_slider = self.dim;
+                self.active_slot = i;
+                self.set_status(format!(
+                    "⌘⇧{} → recalled slot {}",
+                    i + 1,
+                    (b'A' + i as u8) as char
+                ));
+            } else {
+                self.log(
+                    LogSeverity::Warn,
+                    format!(
+                        "⌘⇧{} → slot {} is empty",
+                        i + 1,
+                        (b'A' + i as u8) as char
+                    ),
+                );
+            }
         }
         if advance_walkthrough {
             let next = self.walkthrough_step.map(|s| s + 1).unwrap_or(0);
