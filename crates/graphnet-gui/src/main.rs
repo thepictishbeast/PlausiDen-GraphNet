@@ -2989,6 +2989,31 @@ impl eframe::App for App {
                 if self.workspace == Workspace::Train {
                     section_heading(ui, "🎓 Training");
                     ui.add_space(theme::SPACE_SM);
+
+                    // Status banner — always visible: target state + step count.
+                    let target_status = match &self.train.target {
+                        Some(t) => format!(
+                            "🎯 target locked (dim={}, step {})",
+                            t.dim(),
+                            self.train.steps
+                        ),
+                        None => "○ no target — set one to begin training".to_string(),
+                    };
+                    let target_color = if self.train.target.is_some() {
+                        theme::ACCENT_PURPLE
+                    } else {
+                        theme::TEXT_MUTED
+                    };
+                    card(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new(target_status)
+                                .size(theme::SIZE_BODY)
+                                .color(target_color)
+                                .strong(),
+                        );
+                    });
+
+                    ui.add_space(theme::SPACE_MD);
                     card(ui, |ui| {
                         // Mode picker.
                         ui.label(
@@ -3064,7 +3089,7 @@ impl eframe::App for App {
                     });
 
                     ui.add_space(theme::SPACE_MD);
-                    // Step controls.
+                    // Step controls + run-to-convergence.
                     ui.horizontal(|ui| {
                         if mini_button(ui, "⏵ step", theme::ACCENT_MID).clicked() {
                             self.train_step();
@@ -3079,26 +3104,88 @@ impl eframe::App for App {
                                 self.train_step();
                             }
                         }
+                        // Run-until-converged: keep stepping until loss < 0.05
+                        // or 500 steps elapse (whichever first).
+                        if mini_button(ui, "🏁 run-to-converge", theme::ACCENT_MID)
+                            .on_hover_text("run up to 500 steps or stop when loss < 0.05")
+                            .clicked()
+                        {
+                            for _ in 0..500 {
+                                self.train_step();
+                                if let Some(&l) = self.train.loss_history.last() {
+                                    if l < 0.05 {
+                                        self.log(
+                                            LogSeverity::Success,
+                                            format!(
+                                                "converged: loss {l:.4} at step {}",
+                                                self.train.steps
+                                            ),
+                                        );
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if mini_button(ui, "↺ reset training", theme::TEXT_MUTED).clicked() {
+                            self.train.loss_history.clear();
+                            self.train.steps = 0;
+                            self.set_status("training history cleared".to_string());
+                        }
                     });
 
-                    if !self.train.loss_history.is_empty() {
-                        ui.add_space(theme::SPACE_MD);
+                    // Loss curve — ALWAYS rendered when a target is set, so the
+                    // user sees the (empty) plot waiting for their first step.
+                    ui.add_space(theme::SPACE_MD);
+                    if self.train.target.is_some() {
                         section_heading(ui, "📉 loss curve");
                         ui.add_space(theme::SPACE_SM);
                         card(ui, |ui| {
-                            metric(ui, "steps", &self.train.steps.to_string());
-                            if let Some(last) = self.train.loss_history.last() {
-                                metric(ui, "current loss", &format!("{last:.4}"));
-                            }
-                            if let Some(first) = self.train.loss_history.first() {
-                                metric(ui, "initial loss", &format!("{first:.4}"));
-                            }
+                            ui.horizontal(|ui| {
+                                metric(ui, "steps", &self.train.steps.to_string());
+                                ui.separator();
+                                if let Some(last) = self.train.loss_history.last() {
+                                    metric(ui, "current", &format!("{last:.4}"));
+                                }
+                                if let Some(first) = self.train.loss_history.first() {
+                                    ui.separator();
+                                    metric(ui, "initial", &format!("{first:.4}"));
+                                }
+                                if let (Some(&first), Some(&last)) = (
+                                    self.train.loss_history.first(),
+                                    self.train.loss_history.last(),
+                                ) {
+                                    let pct = ((first - last) / first.max(1e-6)) * 100.0;
+                                    ui.separator();
+                                    let color = if pct > 0.0 {
+                                        theme::ACCENT_BLUE
+                                    } else {
+                                        theme::ACCENT_PURPLE
+                                    };
+                                    ui.label(
+                                        egui::RichText::new(format!("Δ {pct:+.1}%"))
+                                            .size(theme::SIZE_SMALL)
+                                            .color(color)
+                                            .strong(),
+                                    );
+                                }
+                            });
                             ui.add_space(theme::SPACE_SM);
-                            loss_sparkline(
-                                ui,
-                                self.train.loss_history.iter().copied(),
-                                100.0,
-                            );
+                            if self.train.loss_history.is_empty() {
+                                ui.label(
+                                    egui::RichText::new(
+                                        "Click ⏵ step to begin training. Loss = 1 − cos_sim(output, target).",
+                                    )
+                                    .color(theme::TEXT_DIM)
+                                    .italics()
+                                    .size(theme::SIZE_SMALL),
+                                );
+                            } else {
+                                loss_sparkline(
+                                    ui,
+                                    self.train.loss_history.iter().copied(),
+                                    120.0,
+                                );
+                            }
                         });
                     }
                     return;
