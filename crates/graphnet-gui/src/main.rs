@@ -7801,6 +7801,29 @@ fn architecture_graph_3d(
                 }
                 // Symbolic glyph in the upper-right of the node (#756).
                 draw_op_glyph(&painter, *pos, r, tag, size_mul);
+                // Forward-ripple ring: each op pulses during the 0.8s after
+                // a forward fires. Synced to particle_phase.
+                if let Some(phase) = particle_phase {
+                    // Stagger per op so the ripple "rolls" through the stack.
+                    let staggered = phase - (*i as f32) * 0.06;
+                    if (0.0..0.6).contains(&staggered) {
+                        let ring_r = r + staggered * 28.0;
+                        let alpha = (255.0 * (1.0 - staggered / 0.6)) as u8;
+                        painter.circle_stroke(
+                            *pos,
+                            ring_r,
+                            egui::Stroke::new(
+                                1.6,
+                                egui::Color32::from_rgba_unmultiplied(
+                                    colour.r(),
+                                    colour.g(),
+                                    colour.b(),
+                                    alpha,
+                                ),
+                            ),
+                        );
+                    }
+                }
                 // Contribution magnitude bar above the node (game-like health bar).
                 if let Some(mag) = contributions.and_then(|c| c.get(*i)) {
                     let mag_norm = mag.abs().min(1.0) as f32;
