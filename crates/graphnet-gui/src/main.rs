@@ -130,6 +130,10 @@ struct App {
     per_ws_panels: [(bool, bool); 4],
     /// Zoom-modal cell-size multiplier (#721).
     zoom_modal_scale: f32,
+    /// Show the interactive glossary window? (Help → Glossary)
+    show_glossary: bool,
+    /// Glossary search query.
+    glossary_query: String,
     /// User-tweakable W parameter for the symbolic-formula preview (#780).
     sym_w: f32,
     /// User-tweakable b parameter for the symbolic-formula preview.
@@ -774,6 +778,8 @@ impl App {
             ],
             workspace: Workspace::Edit,
             zoom_modal_scale: 1.0,
+            show_glossary: false,
+            glossary_query: String::new(),
             sym_w: 1.0,
             sym_b: 0.0,
             sym_animate: true,
@@ -3123,6 +3129,10 @@ impl eframe::App for App {
                             self.walkthrough_step = Some(0);
                             ui.close_menu();
                         }
+                        if ui.button("📚 Glossary…").clicked() {
+                            self.show_glossary = true;
+                            ui.close_menu();
+                        }
                         if ui.button("🎬 Demo").clicked() {
                             if self.demo.is_none() {
                                 self.start_demo();
@@ -4824,6 +4834,177 @@ impl eframe::App for App {
                     }); // close ScrollArea::vertical
             });
         } // show_left_panel
+
+        // Glossary window — searchable AI / HDC term reference (iter 165).
+        if self.show_glossary {
+            let mut open = self.show_glossary;
+            egui::Window::new("📚 GraphNet glossary")
+                .open(&mut open)
+                .resizable(true)
+                .default_size([560.0, 480.0])
+                .frame(
+                    egui::Frame::none()
+                        .fill(theme::BG_CARD)
+                        .stroke(egui::Stroke::new(1.0, theme::ACCENT_BLUE))
+                        .rounding(egui::Rounding::same(theme::RADIUS_MD))
+                        .inner_margin(egui::Margin::same(theme::SPACE_MD)),
+                )
+                .show(ctx, |ui| {
+                    ui.label(
+                        egui::RichText::new("Search terms (substring match):")
+                            .size(theme::SIZE_SMALL)
+                            .color(theme::TEXT_MUTED),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.glossary_query)
+                            .desired_width(ui.available_width())
+                            .hint_text("dim, cos_sim, bundle, attention, …"),
+                    );
+                    ui.add_space(theme::SPACE_SM);
+                    let entries: &[(&str, &str)] = &[
+                        ("Dim",
+                         "Number of components in a hypervector. Default 10000. \
+                          Bigger dim = more capacity + noise-tolerance, slower math. \
+                          Random hypervectors at D=10000 are nearly orthogonal (var 1/D)."),
+                        ("Hypervector",
+                         "Vector of ±1 values with D components. The substrate of HDC. \
+                          Distributed symbol in a vast space."),
+                        ("cos_sim",
+                         "Cosine similarity ∈ [-1, +1]. +1 = identical, 0 = orthogonal, \
+                          -1 = opposite. Primary readout for 'did the network preserve \
+                          input?'"),
+                        ("Bundle",
+                         "Element-wise majority sign of N hypervectors. HDC's 'OR'. \
+                          Capacity ~ D/4 items before recall degrades."),
+                        ("Op / Operation",
+                         "Single transformation: identity, dense, hrr_bind, permute, \
+                          negate. Each contributes one output to the bundle."),
+                        ("Identity",
+                         "Returns input unchanged. identity(v) = v."),
+                        ("Dense",
+                         "Element-wise multiply by a random bipolar key. \
+                          dense(v, k) = v ⊙ k. Looks random vs v."),
+                        ("HrrBind",
+                         "Same as Dense for bipolar. Named after Plate's HRR. \
+                          Pseudo-invertible: unbind(bind(v, k), k) = v."),
+                        ("Permute",
+                         "Cyclic shift by k. Encodes position. Iterated permute is \
+                          cyclic (Theorem 5 in PROOFS.md)."),
+                        ("Negate",
+                         "Flips all signs: -v. An involution (¬¬v = v)."),
+                        ("Fingerprint (fp)",
+                         "Short blake3 hash of a hypervector — visual identity check."),
+                        ("Stack",
+                         "Ordered list of ops sharing an input + bundled output. \
+                          Fundamental architectural unit."),
+                        ("Forward",
+                         "Single execution of the Stack. Latency 0.1-5 ms typically."),
+                        ("Live mode",
+                         "Re-runs Forward continuously at 60fps. Toggled with L."),
+                        ("Bipolar",
+                         "Value in {-1, +1}. The HDC substrate. Efficient hardware."),
+                        ("Slot (A/B/C/D)",
+                         "Saved stack copy. Up to 4. Cmd+1-4 save, Cmd+Shift+1-4 recall."),
+                        ("Workspace",
+                         "UI mode preset: Edit / Live / Compare / Train."),
+                        ("Loss",
+                         "1 − cos_sim(output, target). Range [0, 2]. Train workspace \
+                          minimizes via hill-climb / anneal."),
+                        ("NeuralGraph",
+                         "Generic DAG of typed neural-net nodes. Dense/Conv2d/Attention/\
+                          LSTM/Embedding/etc. plus novel kinds (EnergyBased, NeuralOde, \
+                          Hamiltonian, Oscillator, Spiking, SymbolicFormula)."),
+                        ("Attention",
+                         "Layer computing weighted sum over input positions via \
+                          query-key dot products. Multi-head. The transformer/LLM core."),
+                        ("Embedding",
+                         "Learned lookup table from token IDs to vectors. \
+                          GPT-2-small: 50257 × 768 = 38M params."),
+                        ("FLOPs",
+                         "Compute cost per Forward — Floating Point Operations."),
+                        ("Hamming distance",
+                         "Count of differing bits / D. Alternative similarity \
+                          measure to cos_sim."),
+                        ("Achievement",
+                         "Unlockable badge for completing a feature-tour milestone. \
+                          12 total."),
+                        ("Objective",
+                         "Numbered 'do this next' goal in the right panel. 10 in order."),
+                        ("Creature name",
+                         "Auto-generated name from op composition (e.g. 'Quad-Crystal \
+                          Hydra' = 4 dense ops)."),
+                        ("NeuralODE",
+                         "Output follows integration of a learned ODE dx/dt = f(x, t, θ). \
+                          Continuous-depth model. Trainable via adjoint method."),
+                        ("Hamiltonian net",
+                         "Preserves an energy invariant via symplectic integration. \
+                          Used for physics-informed ML."),
+                        ("Kuramoto / Oscillator",
+                         "Coupled-oscillator network. N units with coupling K — \
+                          synchronizes when K > 2/(π·g(0))."),
+                        ("Spiking (LIF)",
+                         "Leaky Integrate-and-Fire neuron with discrete spike events. \
+                          Bio-inspired, trainable via surrogate gradients."),
+                    ];
+                    let q = self.glossary_query.to_lowercase();
+                    let matching: Vec<_> = entries
+                        .iter()
+                        .filter(|(name, body)| {
+                            q.is_empty()
+                                || name.to_lowercase().contains(&q)
+                                || body.to_lowercase().contains(&q)
+                        })
+                        .collect();
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} / {} terms",
+                            matching.len(),
+                            entries.len()
+                        ))
+                        .size(theme::SIZE_TINY)
+                        .color(theme::TEXT_MUTED),
+                    );
+                    ui.add_space(theme::SPACE_XS);
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .max_height(360.0)
+                        .show(ui, |ui| {
+                            for (name, body) in &matching {
+                                ui.label(
+                                    egui::RichText::new(*name)
+                                        .size(theme::SIZE_BODY)
+                                        .color(theme::ACCENT_BLUE)
+                                        .strong(),
+                                );
+                                ui.label(
+                                    egui::RichText::new(*body)
+                                        .size(theme::SIZE_SMALL)
+                                        .color(theme::TEXT_PRIMARY),
+                                );
+                                ui.add_space(theme::SPACE_SM);
+                            }
+                            if matching.is_empty() {
+                                ui.label(
+                                    egui::RichText::new(
+                                        "No terms match. Clear query to see all.",
+                                    )
+                                    .color(theme::TEXT_DIM)
+                                    .italics(),
+                                );
+                            }
+                        });
+                    ui.separator();
+                    ui.label(
+                        egui::RichText::new(
+                            "See docs/GLOSSARY.md for the canonical reference + \
+                             docs/PROOFS.md for formal mathematical statements.",
+                        )
+                        .size(theme::SIZE_TINY)
+                        .color(theme::TEXT_DIM),
+                    );
+                });
+            self.show_glossary = open;
+        }
 
         // Architecture inspector (#773 Phase 1.5) — floating window listing
         // factory NeuralGraphs with their layer counts + parameter estimates.
