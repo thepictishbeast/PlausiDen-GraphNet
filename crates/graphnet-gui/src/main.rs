@@ -5719,7 +5719,7 @@ impl eframe::App for App {
                         )
                         .on_hover_text("First 24 components as binary (1 = +1, 0 = -1)");
                         ui.add_space(theme::SPACE_SM);
-                        if hypervector_heatmap_clickable_cmap(ui, &input_clone, 100, 2.0, self.colormap) {
+                        if hypervector_heatmap_clickable_cmap(ui, &input_clone, 80, 1.6, self.colormap) {
                             zoom_request_local = Some(ZoomTarget::Input);
                         }
                     });
@@ -5845,7 +5845,7 @@ impl eframe::App for App {
                                 cosine_similarity_bar(ui, s);
                             }
                             ui.add_space(theme::SPACE_SM);
-                            if hypervector_heatmap_clickable_cmap(ui, &out, 100, 2.0, self.colormap) {
+                            if hypervector_heatmap_clickable_cmap(ui, &out, 80, 1.6, self.colormap) {
                                 zoom_request_local = Some(ZoomTarget::Output);
                             }
                         });
