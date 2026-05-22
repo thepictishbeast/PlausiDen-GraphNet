@@ -2469,7 +2469,7 @@ impl App {
                 .copied()
                 .fold(f64::NEG_INFINITY, f64::max);
             if max_sim > 0.85 {
-                self.unlock("high_sim", "Echo Chamber", "🪞");
+                self.unlock("high_sim", "Echo Chamber", "✦");
             }
         }
         // Advance objective if the current one completes.
@@ -3864,7 +3864,7 @@ impl eframe::App for App {
                         egui::Layout::right_to_left(egui::Align::Center),
                         |ui| {
                             if ui
-                                .small_button("×")
+                                .small_button("✕")
                                 .on_hover_text("close panel (Tab to re-open)")
                                 .clicked()
                             {
@@ -6344,7 +6344,7 @@ impl eframe::App for App {
                         ("low_dim", "🌱", "Minimalist — D ≤ 256"),
                         ("demo_runner", "🎬", "Demo Watcher — run the auto-demo"),
                         ("undoer", "↶", "Revisionist — 5+ undo operations"),
-                        ("high_sim", "🪞", "Echo Chamber — cos_sim > 0.85"),
+                        ("high_sim", "✦", "Echo Chamber — cos_sim > 0.85"),
                     ];
                     egui::Grid::new("achievements_grid")
                         .num_columns(2)
@@ -6456,7 +6456,7 @@ impl eframe::App for App {
                         egui::Layout::right_to_left(egui::Align::Center),
                         |ui| {
                             if ui
-                                .small_button("×")
+                                .small_button("✕")
                                 .on_hover_text("close panel (Shift+Tab to re-open)")
                                 .clicked()
                             {
