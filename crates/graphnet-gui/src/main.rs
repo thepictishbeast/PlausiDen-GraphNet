@@ -7772,9 +7772,40 @@ fn hypervector_heatmap_clickable_cmap(
         if c >= 0 && r >= 0 && (c as usize) < cols && (r as usize) < rows {
             let idx = (r as usize) * cols + (c as usize);
             if idx < dim {
+                // Highlight the hovered cell with a bright white outline.
+                let cell_x = rect.min.x + c as f32 * cell;
+                let cell_y = rect.min.y + r as f32 * cell;
+                painter.rect_stroke(
+                    egui::Rect::from_min_size(
+                        egui::pos2(cell_x - 0.5, cell_y - 0.5),
+                        egui::vec2(cell + 1.0, cell + 1.0),
+                    ),
+                    0.0,
+                    egui::Stroke::new(1.5, egui::Color32::WHITE),
+                );
+                // Column/row context: % positive in this column.
+                let cu = c as usize;
+                let col_total = (0..rows)
+                    .filter(|rr| rr * cols + cu < dim)
+                    .count();
+                let col_pos = (0..rows)
+                    .filter(|rr| {
+                        let i = rr * cols + cu;
+                        i < dim && data[i] > 0
+                    })
+                    .count();
+                let col_pct = if col_total > 0 {
+                    100.0 * col_pos as f64 / col_total as f64
+                } else {
+                    0.0
+                };
                 response.clone().on_hover_text_at_pointer(format!(
-                    "index {idx}  →  {:+}  ·  click to zoom",
-                    data[idx]
+                    "index = {idx}\n\
+                     row × col = {} × {}\n\
+                     value = {:+}\n\
+                     col stats: {col_pos}/{col_total} +1 ({col_pct:.0}%)\n\
+                     click to zoom",
+                    r, c, data[idx]
                 ));
             }
         }
