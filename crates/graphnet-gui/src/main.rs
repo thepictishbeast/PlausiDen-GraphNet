@@ -11,9 +11,7 @@ use graphnet_engine::{
     flop_estimate, stack_from_yaml, stack_to_yaml, ArchSummary, ForwardTrace, Model, Operation,
     ResourceMonitor, ResourceSample, Stack,
 };
-use plausiden_hdc::{cos_sim, hamming, Hypervector};
-
-const YAML_PATH: &str = "graphnet-stack.yaml";
+use plausiden_hdc::{cos_sim, Hypervector};
 
 fn persistent_state_path() -> std::path::PathBuf {
     let base = std::env::var("XDG_CONFIG_HOME")
