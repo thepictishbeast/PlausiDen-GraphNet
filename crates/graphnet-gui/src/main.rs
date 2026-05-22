@@ -2131,6 +2131,14 @@ impl eframe::App for App {
             self.last_sample_at = std::time::Instant::now();
         }
 
+        // Update window title to reflect current workspace.
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
+            "GraphNet — {} · {} ops · D={}",
+            self.workspace.label().trim(),
+            self.stack.len(),
+            self.dim
+        )));
+
         // Adaptive hint banner (#719) — only when stuck.
         if let Some(hint) = self.adaptive_hint {
             egui::TopBottomPanel::top("adaptive_hint")
@@ -3664,6 +3672,18 @@ impl eframe::App for App {
                             .clicked()
                         {
                             close = true;
+                        }
+                        if step > 0 {
+                            if ui
+                                .button(
+                                    egui::RichText::new("← Back")
+                                        .size(theme::SIZE_SMALL)
+                                        .color(theme::TEXT_MUTED),
+                                )
+                                .clicked()
+                            {
+                                self.walkthrough_step = Some(step - 1);
+                            }
                         }
                         ui.with_layout(
                             egui::Layout::right_to_left(egui::Align::Center),
