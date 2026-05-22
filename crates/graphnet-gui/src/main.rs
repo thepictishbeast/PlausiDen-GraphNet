@@ -1848,10 +1848,20 @@ impl eframe::App for App {
                 }
             }
             if i.key_pressed(egui::Key::Escape) {
-                self.show_help = false;
-                self.zoom_target = None;
-                if self.walkthrough_step.is_some() {
+                // Esc closes any modal AND clears selection (lowest priority).
+                if self.show_help
+                    || self.zoom_target.is_some()
+                    || self.walkthrough_step.is_some()
+                    || self.show_templates_popup
+                    || self.show_console
+                {
+                    self.show_help = false;
+                    self.zoom_target = None;
                     self.walkthrough_step = None;
+                    self.show_templates_popup = false;
+                    self.show_console = false;
+                } else {
+                    self.selected_op = None;
                 }
             }
             if i.key_pressed(egui::Key::ArrowRight) && self.walkthrough_step.is_some() {
