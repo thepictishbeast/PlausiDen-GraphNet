@@ -243,6 +243,7 @@ enum ArchInspectorChoice {
     TransformerBlock,
     ResnetBasicBlock,
     CurrentHdcStack,
+    NovelAiDemo,
 }
 
 impl ArchInspectorChoice {
@@ -252,6 +253,7 @@ impl ArchInspectorChoice {
             ArchInspectorChoice::TransformerBlock,
             ArchInspectorChoice::ResnetBasicBlock,
             ArchInspectorChoice::CurrentHdcStack,
+            ArchInspectorChoice::NovelAiDemo,
         ]
     }
     fn label(self) -> &'static str {
@@ -260,6 +262,7 @@ impl ArchInspectorChoice {
             ArchInspectorChoice::TransformerBlock => "Transformer block",
             ArchInspectorChoice::ResnetBasicBlock => "ResNet-18 basic block",
             ArchInspectorChoice::CurrentHdcStack => "Current HDC stack",
+            ArchInspectorChoice::NovelAiDemo => "🧪 Novel-AI demo",
         }
     }
 }
@@ -4365,6 +4368,7 @@ impl eframe::App for App {
                         ArchInspectorChoice::CurrentHdcStack => {
                             factories::from_hdc_stack(self.stack.clone())
                         }
+                        ArchInspectorChoice::NovelAiDemo => factories::novel_ai_demo(),
                     };
                     ui.label(
                         egui::RichText::new(&graph.metadata.family)

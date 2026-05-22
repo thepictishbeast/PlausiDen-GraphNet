@@ -127,6 +127,64 @@ pub enum LayerKind {
     Hdc { stack: Stack },
     /// Custom / user-defined — opaque kind with a label.
     Custom { name: String },
+
+    // ----- Novel-AI / research-frontier kinds (iter 139, #786) -----
+    /// Energy-based model — output is computed by minimizing an energy
+    /// function E(x). Used in Boltzmann machines, EBMs, Hopfield nets.
+    EnergyBased {
+        /// Dimensionality of the state vector.
+        state_dim: usize,
+        /// Number of inference-loop iterations to minimize the energy.
+        steps: usize,
+    },
+    /// Neural ODE — output follows the integration of a learned ODE
+    /// dx/dt = f(x, t, θ). Continuous-depth model.
+    NeuralOde {
+        /// State dimensionality.
+        state_dim: usize,
+        /// Integration steps (Euler / RK4 / etc.).
+        steps: usize,
+        /// Integration end time T (dx/dt integrated from 0..T).
+        t_end: f32,
+    },
+    /// Hamiltonian network — preserves an energy invariant via symplectic
+    /// integration. Used for physics-informed ML.
+    Hamiltonian {
+        /// Dimensionality of the position+momentum state (2D where D is
+        /// configuration space dim).
+        phase_dim: usize,
+        /// Number of symplectic integration steps.
+        steps: usize,
+    },
+    /// Coupled oscillator network — each unit is a phase angle θ_i with
+    /// coupling K_ij. Used in Kuramoto-style sync models.
+    Oscillator {
+        /// Number of oscillators.
+        n_oscillators: usize,
+        /// Coupling strength scalar.
+        coupling: f32,
+        /// Integration steps.
+        steps: usize,
+    },
+    /// Spiking neural network — leaky integrate-and-fire with discrete
+    /// spike events. Bio-inspired.
+    Spiking {
+        /// Number of neurons.
+        n_neurons: usize,
+        /// Membrane time constant τ_m.
+        tau_m: f32,
+        /// Firing threshold.
+        threshold: f32,
+    },
+    /// Symbolic / equation-based — user-defined math formula. Parameters
+    /// are the symbols referenced in the formula. Used for novel research
+    /// where the architecture IS the math.
+    SymbolicFormula {
+        /// Math expression as string (e.g. "tanh(W*x + b) + 0.1*sin(t)")
+        formula: String,
+        /// Named scalar parameters.
+        params: Vec<(String, f32)>,
+    },
 }
 
 impl LayerKind {
@@ -167,6 +225,13 @@ impl LayerKind {
                 stack.dim() * stack.len()
             }
             LayerKind::Custom { .. } => 0,
+            // Novel-AI kinds (iter 139):
+            LayerKind::EnergyBased { state_dim, .. } => state_dim * state_dim,
+            LayerKind::NeuralOde { state_dim, .. } => state_dim * state_dim,
+            LayerKind::Hamiltonian { phase_dim, .. } => phase_dim * phase_dim,
+            LayerKind::Oscillator { n_oscillators, .. } => n_oscillators * n_oscillators,
+            LayerKind::Spiking { n_neurons, .. } => n_neurons * n_neurons,
+            LayerKind::SymbolicFormula { params, .. } => params.len(),
         }
     }
 
@@ -187,6 +252,12 @@ impl LayerKind {
             LayerKind::Reshape { .. } => "reshape",
             LayerKind::Hdc { .. } => "hdc",
             LayerKind::Custom { .. } => "custom",
+            LayerKind::EnergyBased { .. } => "ebm",
+            LayerKind::NeuralOde { .. } => "neural_ode",
+            LayerKind::Hamiltonian { .. } => "hamiltonian",
+            LayerKind::Oscillator { .. } => "oscillator",
+            LayerKind::Spiking { .. } => "spiking",
+            LayerKind::SymbolicFormula { .. } => "symbolic",
         }
     }
 }
@@ -607,6 +678,81 @@ pub mod factories {
         g
     }
 
+    /// Novel-AI demo: a research-frontier network mixing physics + symbolic
+    /// + spiking + neural-ODE layers. Demonstrates the new LayerKinds added
+    /// in iter 139 for the #786 "make completely novel AI" direction.
+    #[must_use]
+    pub fn novel_ai_demo() -> NeuralGraph {
+        let mut g = NeuralGraph::new();
+        g.metadata.family = "Novel-AI demo".to_string();
+        g.metadata.notes =
+            "Energy-based input → NeuralODE evolution → Hamiltonian preservation \
+             → Oscillator coupling → Spiking decoder → Symbolic output."
+                .to_string();
+        let inp = g.add_node(Node::input(vec![1, 128], DType::F32, "x"));
+        let ebm = g.add_node(Node::layer(
+            LayerKind::EnergyBased {
+                state_dim: 128,
+                steps: 20,
+            },
+            "ebm-init",
+        ));
+        let ode = g.add_node(Node::layer(
+            LayerKind::NeuralOde {
+                state_dim: 128,
+                steps: 16,
+                t_end: 1.0,
+            },
+            "ode-evolve",
+        ));
+        let ham = g.add_node(Node::layer(
+            LayerKind::Hamiltonian {
+                phase_dim: 128,
+                steps: 8,
+            },
+            "energy-preserve",
+        ));
+        let osc = g.add_node(Node::layer(
+            LayerKind::Oscillator {
+                n_oscillators: 64,
+                coupling: 0.3,
+                steps: 32,
+            },
+            "kuramoto-couple",
+        ));
+        let spike = g.add_node(Node::layer(
+            LayerKind::Spiking {
+                n_neurons: 64,
+                tau_m: 20.0,
+                threshold: 1.0,
+            },
+            "lif-spike",
+        ));
+        let sym = g.add_node(Node::layer(
+            LayerKind::SymbolicFormula {
+                formula: "tanh(W*x + b) + 0.1*sin(t)".to_string(),
+                params: vec![
+                    ("W".to_string(), 1.0),
+                    ("b".to_string(), 0.0),
+                    ("t".to_string(), 0.0),
+                ],
+            },
+            "symbolic-read",
+        ));
+        let out = g.add_node(Node::output(vec![1, 64], DType::F32, "y"));
+        let chain = [inp, ebm, ode, ham, osc, spike, sym, out];
+        for w in chain.windows(2) {
+            g.add_edge(Edge {
+                from: w[0],
+                to: w[1],
+                shape: vec![1, 128],
+                dtype: DType::F32,
+                label: "x".to_string(),
+            });
+        }
+        g
+    }
+
     /// Wrap an existing HDC Stack as a NeuralGraph for unified rendering.
     /// One HdcLayer node bridges between Input → HDC → Output.
     #[must_use]
@@ -787,6 +933,37 @@ mod tests {
         assert_eq!(g.nodes.len(), 7);
         assert_eq!(g.edges.len(), 7);
         assert!(!g.has_cycle());
+    }
+
+    #[test]
+    fn novel_ai_demo_runs() {
+        let g = factories::novel_ai_demo();
+        assert_eq!(g.metadata.family, "Novel-AI demo");
+        // 8 nodes: input + 6 novel-kind layers + output.
+        assert_eq!(g.nodes.len(), 8);
+        assert!(!g.has_cycle());
+        // Each novel layer kind contributes some parameter count.
+        let p = g.total_params();
+        assert!(p > 0, "novel demo should have nonzero param estimate");
+    }
+
+    #[test]
+    fn novel_layer_kinds_have_tags() {
+        let kinds = [
+            LayerKind::EnergyBased { state_dim: 10, steps: 5 },
+            LayerKind::NeuralOde { state_dim: 10, steps: 5, t_end: 1.0 },
+            LayerKind::Hamiltonian { phase_dim: 10, steps: 5 },
+            LayerKind::Oscillator { n_oscillators: 10, coupling: 0.1, steps: 5 },
+            LayerKind::Spiking { n_neurons: 10, tau_m: 20.0, threshold: 1.0 },
+            LayerKind::SymbolicFormula {
+                formula: "x*x".to_string(),
+                params: vec![],
+            },
+        ];
+        let expected = ["ebm", "neural_ode", "hamiltonian", "oscillator", "spiking", "symbolic"];
+        for (k, e) in kinds.iter().zip(expected.iter()) {
+            assert_eq!(k.tag(), *e);
+        }
     }
 
     #[test]
