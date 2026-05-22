@@ -280,7 +280,7 @@ impl ArchInspectorChoice {
             ArchInspectorChoice::TransformerBlock => "Transformer block",
             ArchInspectorChoice::ResnetBasicBlock => "ResNet-18 basic block",
             ArchInspectorChoice::CurrentHdcStack => "Current HDC stack",
-            ArchInspectorChoice::NovelAiDemo => "* Novel-AI demo",
+            ArchInspectorChoice::NovelAiDemo => "🧪 Novel-AI demo",
         }
     }
 }
@@ -521,7 +521,7 @@ const WALKTHROUGH_STEPS: &[(&str, &str)] = &[
         "Welcome to GraphNet",
         "A live REPL + graphing calculator for HDC neural networks. \
          No training, no GPU model files — just compose ops and watch the \
-         network behave in real time. Press 'Next' for the tour.",
+         network behave in real time. Press → for the tour.",
     ),
     (
         "1. Pick a template (or blank)",
@@ -2975,7 +2975,7 @@ impl eframe::App for App {
                         ui.checkbox(&mut self.show_console, "Console  `");
                         ui.checkbox(&mut self.show_floating_stats, "Floating stats");
                         ui.checkbox(&mut self.show_floating_minihelp, "Floating shortcuts");
-                        ui.checkbox(&mut self.show_arch_inspector, "⌬ Architecture inspector");
+                        ui.checkbox(&mut self.show_arch_inspector, "🧠 Architecture inspector");
                         ui.separator();
                         ui.checkbox(&mut self.arch_autorotate, "Auto-rotate 3D");
                         ui.checkbox(&mut self.live, "Live mode  L");
@@ -3614,7 +3614,7 @@ impl eframe::App for App {
                 }
                 // Creature name from op composition (game-feel).
                 ui.label(
-                    egui::RichText::new(format!("⌥ {}", self.creature_name()))
+                    egui::RichText::new(format!("🧬 {}", self.creature_name()))
                         .size(theme::SIZE_SMALL)
                         .color(theme::ACCENT_PURPLE)
                         .italics(),
@@ -5147,7 +5147,7 @@ impl eframe::App for App {
         // factory NeuralGraphs with their layer counts + parameter estimates.
         if self.show_arch_inspector {
             let mut open = self.show_arch_inspector;
-            egui::Window::new("⌬ Architecture inspector")
+            egui::Window::new("🧠 Architecture inspector")
                 .open(&mut open)
                 .resizable(true)
                 .default_size([520.0, 440.0])
@@ -8613,7 +8613,7 @@ fn architecture_graph_3d(
             painter.text(
                 egui::pos2(box_rect.min.x + 8.0, box_rect.min.y + 36.0),
                 egui::Align2::LEFT_TOP,
-                "arrow keys: nav  ·  Backspace: remove",
+                "← / → to nav · × to remove",
                 egui::FontId::proportional(theme::SIZE_TINY),
                 theme::TEXT_DIM,
             );
