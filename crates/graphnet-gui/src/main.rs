@@ -5128,6 +5128,24 @@ impl eframe::App for App {
                         let right = &mut cols[1];
                         let out = self.last_output.clone().expect("checked");
                         let out_summary = Self::hv_summary(&out);
+                        // Stack-changed warning — the displayed output may be stale.
+                        let stack_changed = self
+                            .last_trace
+                            .as_ref()
+                            .map(|t| t.per_op.len() != self.stack.len())
+                            .unwrap_or(false);
+                        if stack_changed {
+                            right.label(
+                                egui::RichText::new(
+                                    "⚠ Stack changed since last forward — output is stale. \
+                                     Press Space to refresh.",
+                                )
+                                .size(theme::SIZE_SMALL)
+                                .color(theme::ACCENT_PURPLE)
+                                .strong(),
+                            );
+                            right.add_space(theme::SPACE_XS);
+                        }
                         // Game-feel: green halo on high cos_sim, red on inverted.
                         let glow_intensity = self.last_forward_at
                             .map(|t| {
@@ -5294,6 +5312,43 @@ impl eframe::App for App {
                         },
                     );
                 });
+                // Always-visible architecture summary row — counts each op kind.
+                {
+                    let mut counts: std::collections::BTreeMap<&str, usize> =
+                        std::collections::BTreeMap::new();
+                    for op in self.stack.operations() {
+                        *counts.entry(op.tag()).or_insert(0) += 1;
+                    }
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!("Σ {} ops:", self.stack.len()))
+                                .size(theme::SIZE_TINY)
+                                .color(theme::TEXT_MUTED),
+                        );
+                        for (tag, n) in &counts {
+                            ui.label(
+                                egui::RichText::new(format!("{}×{}", n, tag))
+                                    .size(theme::SIZE_TINY)
+                                    .background_color(
+                                        theme::op_color(tag).gamma_multiply(0.18),
+                                    )
+                                    .color(theme::op_color(tag))
+                                    .monospace()
+                                    .strong(),
+                            );
+                            ui.add_space(2.0);
+                        }
+                        if counts.is_empty() {
+                            ui.label(
+                                egui::RichText::new("(empty)")
+                                    .size(theme::SIZE_TINY)
+                                    .color(theme::TEXT_DIM)
+                                    .italics(),
+                            );
+                        }
+                    });
+                    ui.add_space(theme::SPACE_XS);
+                }
                 ui.add_space(theme::SPACE_SM);
                 let op_tags: Vec<String> = self
                     .stack
