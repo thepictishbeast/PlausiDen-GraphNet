@@ -3647,24 +3647,71 @@ impl eframe::App for App {
                             }
                             ui.add_space(theme::SPACE_SM);
                             for (i, template) in TEMPLATES.iter().enumerate() {
-                                let card = ui.add(
-                                    egui::Button::new(
-                                        egui::RichText::new(format!(
-                                            "{}.  {}\n{}\n\n{}",
-                                            i + 1,
-                                            template.name,
-                                            template.summary,
-                                            template.explanation,
-                                        ))
-                                        .size(theme::SIZE_SMALL)
-                                        .color(theme::TEXT_PRIMARY),
-                                    )
+                                // Render as a clickable card with title + summary +
+                                // op-kind preview chips + numeric shortcut hint.
+                                let card_resp = egui::Frame::none()
                                     .fill(theme::BG_CARD_HOVER)
                                     .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
                                     .rounding(egui::Rounding::same(theme::RADIUS_MD))
-                                    .min_size(egui::vec2(ui.available_width(), 84.0)),
-                                );
-                                if card.clicked() {
+                                    .inner_margin(egui::Margin::same(theme::SPACE_MD))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(
+                                                egui::RichText::new(format!("{}", i + 1))
+                                                    .size(theme::SIZE_H2)
+                                                    .color(theme::ACCENT_PURPLE)
+                                                    .strong(),
+                                            );
+                                            ui.vertical(|ui| {
+                                                ui.label(
+                                                    egui::RichText::new(template.name)
+                                                        .size(theme::SIZE_BODY)
+                                                        .color(theme::ACCENT_BLUE)
+                                                        .strong(),
+                                                );
+                                                ui.label(
+                                                    egui::RichText::new(template.summary)
+                                                        .size(theme::SIZE_SMALL)
+                                                        .color(theme::TEXT_PRIMARY),
+                                                );
+                                                // Op-kind preview chips.
+                                                ui.horizontal_wrapped(|ui| {
+                                                    for op in template.ops {
+                                                        let oc = theme::op_color(op);
+                                                        ui.label(
+                                                            egui::RichText::new(format!(" {op} "))
+                                                                .size(theme::SIZE_TINY)
+                                                                .background_color(
+                                                                    oc.gamma_multiply(0.15),
+                                                                )
+                                                                .color(oc)
+                                                                .monospace(),
+                                                        );
+                                                    }
+                                                    ui.label(
+                                                        egui::RichText::new(format!(
+                                                            "  · D={}",
+                                                            template.dim
+                                                        ))
+                                                        .size(theme::SIZE_TINY)
+                                                        .color(theme::TEXT_MUTED),
+                                                    );
+                                                });
+                                                ui.label(
+                                                    egui::RichText::new(template.explanation)
+                                                        .size(theme::SIZE_TINY)
+                                                        .color(theme::TEXT_MUTED)
+                                                        .italics(),
+                                                );
+                                            });
+                                        });
+                                    })
+                                    .response
+                                    .interact(egui::Sense::click());
+                                if card_resp.hovered() {
+                                    ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+                                }
+                                if card_resp.clicked() {
                                     load = Some(template.name);
                                 }
                                 ui.add_space(theme::SPACE_XS);
