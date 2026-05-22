@@ -271,7 +271,7 @@ impl ArchInspectorChoice {
             ArchInspectorChoice::TransformerBlock => "Transformer block",
             ArchInspectorChoice::ResnetBasicBlock => "ResNet-18 basic block",
             ArchInspectorChoice::CurrentHdcStack => "Current HDC stack",
-            ArchInspectorChoice::NovelAiDemo => "🧪 Novel-AI demo",
+            ArchInspectorChoice::NovelAiDemo => "* Novel-AI demo",
         }
     }
 }
@@ -2943,7 +2943,7 @@ impl eframe::App for App {
                         ui.checkbox(&mut self.show_console, "Console  `");
                         ui.checkbox(&mut self.show_floating_stats, "Floating stats");
                         ui.checkbox(&mut self.show_floating_minihelp, "Floating shortcuts");
-                        ui.checkbox(&mut self.show_arch_inspector, "🧠 Architecture inspector");
+                        ui.checkbox(&mut self.show_arch_inspector, "⌬ Architecture inspector");
                         ui.separator();
                         ui.checkbox(&mut self.arch_autorotate, "Auto-rotate 3D");
                         ui.checkbox(&mut self.live, "Live mode  L");
@@ -3548,21 +3548,25 @@ impl eframe::App for App {
                 }
                 // Creature name from op composition (game-feel).
                 ui.label(
-                    egui::RichText::new(format!("🧬 {}", self.creature_name()))
+                    egui::RichText::new(format!("⌥ {}", self.creature_name()))
                         .size(theme::SIZE_SMALL)
                         .color(theme::ACCENT_PURPLE)
                         .italics(),
                 );
                 ui.separator();
+                // Stack info — kept tight: name · ops × dim · flops
                 ui.label(
                     egui::RichText::new(format!(
-                        "{}  ·  dim {}  ·  ops {}  ·  flops {flops:.1e}",
+                        "{}  ·  {} ops × {}D  ·  {flops:.1e} flops/fwd",
                         self.template,
-                        self.dim,
-                        self.stack.len()
+                        self.stack.len(),
+                        self.dim
                     ))
                     .size(theme::SIZE_SMALL)
                     .color(theme::TEXT_MUTED),
+                )
+                .on_hover_text(
+                    "Template name · op count × dimensionality · FLOPs per forward",
                 );
                 if let Some(idx) = self.selected_op {
                     if let Some(op) = self.stack.operations().get(idx) {
@@ -4776,7 +4780,7 @@ impl eframe::App for App {
         // factory NeuralGraphs with their layer counts + parameter estimates.
         if self.show_arch_inspector {
             let mut open = self.show_arch_inspector;
-            egui::Window::new("🧠 Architecture inspector")
+            egui::Window::new("⌬ Architecture inspector")
                 .open(&mut open)
                 .resizable(true)
                 .default_size([520.0, 440.0])
