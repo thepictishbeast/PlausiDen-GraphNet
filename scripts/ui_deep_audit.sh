@@ -251,22 +251,29 @@ else
 fi
 step "H_post_live"
 
-# Phase I: multi-resize integrity — narrow + wide + back.
-echo "==== Phase I: multi-resize ===="
-xdotool windowsize "$WIN" 800 600
-sleep 0.5
-step "I_narrow_800"
-xdotool windowsize "$WIN" 1920 1080
-sleep 0.5
-step "I_wide_1920"
-xdotool windowsize "$WIN" 1280 720
-sleep 0.5
-step "I_medium_1280"
-# App should still be alive.
-if kill -0 "$GUI_PID" 2>/dev/null; then
-    echo "  ✓ survived 3 resizes"
+# Phase I: resize integrity — ONE resize then restore. Skipped by default
+# because the resize-window-multiple-times pattern looks like minimize
+# cycles to the user observing the desktop. Set GRAPHNET_AUDIT_RESIZE=1
+# to opt in.
+if [ "${GRAPHNET_AUDIT_RESIZE:-0}" = "1" ]; then
+    echo "==== Phase I: resize integrity (opt-in) ===="
+    # Save current geometry first.
+    ORIG_GEOM=$(xdotool getwindowgeometry --shell "$WIN" 2>/dev/null)
+    ORIG_W=$(echo "$ORIG_GEOM" | awk -F= '/^WIDTH=/{print $2}')
+    ORIG_H=$(echo "$ORIG_GEOM" | awk -F= '/^HEIGHT=/{print $2}')
+    xdotool windowsize "$WIN" 1280 800
+    sleep 0.5
+    step "I_resized_1280"
+    # Restore to original size to avoid leaving a weird-sized window.
+    xdotool windowsize "$WIN" "$ORIG_W" "$ORIG_H"
+    sleep 0.5
+    if kill -0 "$GUI_PID" 2>/dev/null; then
+        echo "  ✓ survived resize round-trip"
+    else
+        fail "app died during resize"
+    fi
 else
-    fail "app died during resize"
+    echo "==== Phase I: resize integrity — SKIPPED (set GRAPHNET_AUDIT_RESIZE=1 to enable) ===="
 fi
 
 # Phase J: log-file structural assertions.

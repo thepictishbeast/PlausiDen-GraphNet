@@ -181,14 +181,17 @@ else
 fi
 
 echo "==== Phase 11: window resize ===="
-xdotool windowsize "$WIN" 1024 600
+# Single resize + restore to keep the desktop view tidy. The owner noticed
+# the previous narrow→wide→fullscreen cycle looks like minimize spam.
+ORIG_GEOM=$(xdotool getwindowgeometry --shell "$WIN" 2>/dev/null)
+ORIG_W=$(echo "$ORIG_GEOM" | awk -F= '/^WIDTH=/{print $2}')
+ORIG_H=$(echo "$ORIG_GEOM" | awk -F= '/^HEIGHT=/{print $2}')
+xdotool windowsize "$WIN" 1280 800
 sleep 0.5
-step "p11_00_narrow"
-xdotool windowsize "$WIN" 1920 1080
+step "p11_00_resized"
+xdotool windowsize "$WIN" "$ORIG_W" "$ORIG_H"
 sleep 0.5
-step "p11_01_wide"
-xdotool key --window "$WIN" super+f 2>/dev/null || true  # try toggle fullscreen
-sleep 0.5
+step "p11_01_restored"
 
 echo "==== Phase 11.5: log-file behavior assertions ===="
 LOG="${XDG_CONFIG_HOME:-$HOME/.config}/graphnet/graphnet.log"
