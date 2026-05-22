@@ -123,6 +123,10 @@ struct App {
     dirty_since: Option<std::time::Instant>,
     /// Workspace tab (#743).
     workspace: Workspace,
+    /// Per-workspace panel-visibility memory (left × right). Switching
+    /// to a workspace restores its remembered panel state.
+    /// Indices: 0=Edit, 1=Live, 2=Compare, 3=Train.
+    per_ws_panels: [(bool, bool); 4],
     /// Zoom-modal cell-size multiplier (#721).
     zoom_modal_scale: f32,
     /// A/B compare: snapshot of a stack to compare against current (#711).
@@ -701,6 +705,12 @@ impl App {
             demo_pace_sec: 2.5,
             recent_change: None,
             dirty_since: None,
+            per_ws_panels: [
+                (true, true),   // Edit: both panels
+                (false, true),  // Live: 3D-maximizing, hide left
+                (true, true),   // Compare: both
+                (true, true),   // Train: both
+            ],
             workspace: Workspace::Edit,
             zoom_modal_scale: 1.0,
             snapshot_stack: None,
@@ -2477,6 +2487,15 @@ impl eframe::App for App {
                             ctx.request_repaint();
                         }
                         if resp.clicked() {
+                            // Save current workspace's panel state before switch.
+                            let prev_idx = match self.workspace {
+                                Workspace::Edit => 0,
+                                Workspace::Live => 1,
+                                Workspace::Compare => 2,
+                                Workspace::Train => 3,
+                            };
+                            self.per_ws_panels[prev_idx] =
+                                (self.show_left_panel, self.show_right_panel);
                             self.workspace = *ws;
                             self.set_status(format!("workspace → {}", ws.label()));
                             self.log(
@@ -2492,20 +2511,26 @@ impl eframe::App for App {
                                 Workspace::Live => {
                                     self.tool_mode = ToolMode::Edit;
                                     self.live = true; // auto-start live mode
-                                    // Maximize 3D real estate by collapsing left panel.
-                                    self.show_left_panel = false;
                                 }
                                 Workspace::Compare => {
                                     self.tool_mode = ToolMode::Compare;
                                     self.live = false;
-                                    self.show_left_panel = true;
                                 }
                                 Workspace::Train => {
                                     self.tool_mode = ToolMode::Edit;
                                     self.live = false;
-                                    self.show_left_panel = true;
                                 }
                             }
+                            // Restore remembered panel state for the new workspace.
+                            let new_idx = match ws {
+                                Workspace::Edit => 0,
+                                Workspace::Live => 1,
+                                Workspace::Compare => 2,
+                                Workspace::Train => 3,
+                            };
+                            let (l, r) = self.per_ws_panels[new_idx];
+                            self.show_left_panel = l;
+                            self.show_right_panel = r;
                         }
                         ui.add_space(2.0);
                     }

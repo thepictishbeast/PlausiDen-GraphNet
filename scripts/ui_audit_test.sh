@@ -57,7 +57,7 @@ echo "==== Phase 1: cold-start + first paint ===="
 launch
 step "p1_00_coldstart"
 
-echo "==== Phase 2: stress — add 30 ops rapidly ===="
+echo "==== Phase 2: stress — add 30 ops rapidly + regen input + 5 forwards ===="
 for i in $(seq 1 30); do
     case $((i % 5)) in
         0) k=a ;;
@@ -69,6 +69,15 @@ for i in $(seq 1 30); do
     xdotool key --window "$WIN" "$k"
 done
 step "p2_00_30_ops_added"
+# Cover input regen + a few forwards to exercise more code paths.
+for i in 1 2 3; do
+    xdotool key --window "$WIN" r
+done
+step "p2_01_input_regen_3x"
+for i in 1 2 3 4 5; do
+    xdotool key --window "$WIN" space
+done
+step "p2_02_5_forwards"
 sleep 0.5
 
 echo "==== Phase 3: rapid undo back to empty ===="
@@ -202,6 +211,49 @@ else
     assert_logged "+ op \[" "any op add"
     assert_logged "💾 persisted" "any persist"
     assert_logged "live mode" "live mode toggle"
+    # NOTE: undo doesn't call remove_op() — it swaps the whole stack. So
+    # the "− op" pattern only fires when the user explicitly removes via
+    # right-click menu or Backspace. We don't exercise those in the audit
+    # script, so this assertion was a false positive and is intentionally
+    # removed. The "↶ undo" assertion below covers the undo path itself.
+    assert_logged "↶ undo" "any undo"
+    assert_logged "↷ redo" "any redo"
+    assert_logged "saved current stack to slot" "slot save"
+    assert_logged "input regenerated" "input regen (new in Phase 2)"
+    # Multiple templates should be loaded (Phase 5 cycles all 10).
+    TLOADS=$(grep -c "template '.*' loaded" "$LOG")
+    if [ "$TLOADS" -lt 5 ]; then
+        fail "only $TLOADS template loads in log — Phase 5 should produce 10+"
+    else
+        echo "  ✓ logged: $TLOADS template loads (expected ≥5)"
+    fi
+    # Multiple persists should have fired (auto-persist debounce).
+    PERSISTS=$(grep -c "💾 persisted" "$LOG")
+    if [ "$PERSISTS" -lt 3 ]; then
+        fail "only $PERSISTS persists in log — auto-persist may be broken"
+    else
+        echo "  ✓ logged: $PERSISTS persist writes (expected ≥3)"
+    fi
+fi
+
+# Verify settings.yaml contains achievement persistence proof.
+SETTINGS="${XDG_CONFIG_HOME:-$HOME/.config}/graphnet/settings.yaml"
+if [ -f "$SETTINGS" ]; then
+    if grep -q "^achievements:" "$SETTINGS"; then
+        ACH=$(grep "^achievements:" "$SETTINGS" | sed 's/^achievements: //')
+        ACH_COUNT=$(echo "$ACH" | tr ',' '\n' | grep -v '^$' | wc -l)
+        echo "  ✓ achievements persisted: $ACH_COUNT — [$ACH]"
+        if [ "$ACH_COUNT" -lt 1 ]; then
+            echo "  (note: 0 achievements is suspicious after a long audit)"
+        fi
+    else
+        fail "settings.yaml missing 'achievements:' key"
+    fi
+    if grep -q "^objectives_done:" "$SETTINGS"; then
+        echo "  ✓ objectives_done bitstring present"
+    else
+        fail "settings.yaml missing 'objectives_done:' key"
+    fi
 fi
 
 echo "==== Phase 12: shutdown ===="
