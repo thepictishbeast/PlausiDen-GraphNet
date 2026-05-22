@@ -6017,7 +6017,7 @@ impl eframe::App for App {
                         );
                         ui.label(
                             egui::RichText::new(format!("…{}…", input_summary.binary_prefix))
-                                .size(theme::SIZE_TINY)
+                                .size(theme::SIZE_BODY)
                                 .color(theme::ACCENT_BLUE)
                                 .monospace(),
                         )
@@ -6116,7 +6116,7 @@ impl eframe::App for App {
                             );
                             ui.label(
                                 egui::RichText::new(format!("…{}…", out_summary.binary_prefix))
-                                    .size(theme::SIZE_TINY)
+                                    .size(theme::SIZE_BODY)
                                     .color(theme::ACCENT_PURPLE)
                                     .monospace(),
                             );
