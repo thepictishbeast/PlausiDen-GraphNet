@@ -113,6 +113,8 @@ struct App {
     workspace: Workspace,
     /// Zoom-modal cell-size multiplier (#721).
     zoom_modal_scale: f32,
+    /// A/B compare: snapshot of a stack to compare against current (#711).
+    snapshot_stack: Option<Stack>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -589,6 +591,7 @@ impl App {
             recent_change: None,
             workspace: Workspace::Edit,
             zoom_modal_scale: 1.0,
+            snapshot_stack: None,
         };
         app.load_template("standard");
         // Try to restore previous session.
@@ -2062,13 +2065,69 @@ impl eframe::App for App {
                     return;
                 }
                 if self.tool_mode == ToolMode::Compare {
-                    ui.label(
-                        egui::RichText::new(
-                            "A/B compare mode lands in a future iter (#711 in tracker).",
-                        )
-                        .color(theme::TEXT_MUTED)
-                        .size(theme::SIZE_SMALL),
-                    );
+                    section_heading(ui, "A/B compare");
+                    ui.add_space(theme::SPACE_SM);
+                    card(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new(
+                                "Snapshot the current stack as 'A', then mutate the live \
+                                 stack to create 'B'. Run a forward to compare outputs.",
+                            )
+                            .size(theme::SIZE_SMALL)
+                            .color(theme::TEXT_PRIMARY),
+                        );
+                        ui.add_space(theme::SPACE_SM);
+                        ui.horizontal(|ui| {
+                            if mini_button(ui, "📸 Snapshot as A", theme::ACCENT_BLUE).clicked() {
+                                self.snapshot_stack = Some(self.stack.clone());
+                                self.set_status("snapshotted current stack as A".to_string());
+                            }
+                            if self.snapshot_stack.is_some() {
+                                if mini_button(ui, "↺ Restore A", theme::ACCENT_PURPLE).clicked() {
+                                    if let Some(a) = self.snapshot_stack.clone() {
+                                        self.push_undo();
+                                        self.stack = a;
+                                        self.dim = self.stack.dim();
+                                        self.dim_slider = self.dim;
+                                        self.set_status("restored stack from snapshot A".to_string());
+                                    }
+                                }
+                                if mini_button(ui, "✕ Clear A", theme::TEXT_MUTED).clicked() {
+                                    self.snapshot_stack = None;
+                                    self.set_status("cleared snapshot A".to_string());
+                                }
+                            }
+                        });
+                    });
+                    if let Some(a) = &self.snapshot_stack {
+                        ui.add_space(theme::SPACE_MD);
+                        section_heading(ui, "A vs B");
+                        ui.add_space(theme::SPACE_SM);
+                        // Run forwards on both and compute cos_sim.
+                        let a_out = a.forward(&self.input).ok();
+                        let b_out = self.stack.forward(&self.input).ok();
+                        card(ui, |ui| {
+                            metric(ui, "A ops", &a.len().to_string());
+                            metric(ui, "B ops", &self.stack.len().to_string());
+                            metric(ui, "A dim", &a.dim().to_string());
+                            metric(ui, "B dim", &self.stack.dim().to_string());
+                            if let (Some(a_o), Some(b_o)) = (&a_out, &b_out) {
+                                if a_o.dim() == b_o.dim() {
+                                    let sim = cos_sim(a_o, b_o).unwrap_or(0.0);
+                                    ui.add_space(theme::SPACE_SM);
+                                    cosine_similarity_bar(ui, sim);
+                                } else {
+                                    ui.label(
+                                        egui::RichText::new(
+                                            "(dim mismatch — can't compute cos_sim)",
+                                        )
+                                        .color(theme::TEXT_DIM)
+                                        .italics(),
+                                    );
+                                }
+                            }
+                        });
+                    }
                     return;
                 }
                 if self.tool_mode == ToolMode::Help {
