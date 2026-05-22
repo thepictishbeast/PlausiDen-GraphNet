@@ -5561,6 +5561,14 @@ fn architecture_graph_3d(
     } else {
         None
     };
+    // Right-click pos for 3D context menu (handled by caller via the
+    // selected_op/right-click flow — wire later for full context menus).
+    let _right_click_pos: Option<egui::Pos2> =
+        if response.secondary_clicked() {
+            response.interact_pointer_pos()
+        } else {
+            None
+        };
 
     for (kind, pos, depth) in &nodes {
         let size_mul = (3.0 / depth.max(0.1)).clamp(0.5, 1.6);
@@ -5601,6 +5609,15 @@ fn architecture_graph_3d(
                 if let Some(cp) = click_pos {
                     let dx = cp.x - pos.x;
                     let dy = cp.y - pos.y;
+                    if (dx * dx + dy * dy).sqrt() <= r + 4.0 {
+                        clicked = Some(*i);
+                    }
+                }
+                // Right-click on a 3D node → set as selected, then the
+                // existing inline-editor card handles the action menu.
+                if let Some(rcp) = _right_click_pos {
+                    let dx = rcp.x - pos.x;
+                    let dy = rcp.y - pos.y;
                     if (dx * dx + dy * dy).sqrt() <= r + 4.0 {
                         clicked = Some(*i);
                     }
