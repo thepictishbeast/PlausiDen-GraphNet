@@ -860,6 +860,13 @@ impl App {
         self.last_latency_ms = None;
         self.last_cos_sim = None;
         self.dim_slider = dim;
+        self.log(
+            LogSeverity::Success,
+            format!(
+                "template '{name}' loaded — {} ops, dim={dim}",
+                self.stack.len()
+            ),
+        );
     }
 
     /// Change the dimensionality on the fly. Drops all ops and the
@@ -868,6 +875,7 @@ impl App {
         if new_dim == self.dim {
             return;
         }
+        let old_dim = self.dim;
         self.dim = new_dim;
         self.input = Hypervector::random_seeded(new_dim, self.input_seed);
         self.stack = Stack::new(new_dim);
@@ -880,11 +888,19 @@ impl App {
         self.latency_history.clear();
         self.dim_slider = new_dim;
         self.set_status(format!("dim → {new_dim}; stack cleared"));
+        self.log(
+            LogSeverity::Warn,
+            format!("dim {old_dim} → {new_dim} — stack cleared, history reset"),
+        );
     }
 
     fn regenerate_input(&mut self) {
         self.input_seed = self.input_seed.wrapping_add(1);
         self.input = Hypervector::random_seeded(self.dim, self.input_seed);
+        self.log(
+            LogSeverity::Info,
+            format!("input regenerated — seed={}", self.input_seed),
+        );
     }
 
     fn add_op(&mut self, kind: &str) {
@@ -904,15 +920,35 @@ impl App {
                 shift: (self.stack.len() * 7 + 13) % self.dim.max(1),
             },
             "negate" => Operation::Negate,
-            _ => return,
+            _ => {
+                self.log(
+                    LogSeverity::Warn,
+                    format!("add_op: unknown kind '{kind}' — skipped"),
+                );
+                return;
+            }
         };
         self.stack.add_operation(op);
+        self.log(
+            LogSeverity::Info,
+            format!("+ op [{new_idx}] {kind} — stack now {} ops", self.stack.len()),
+        );
     }
 
     fn remove_op(&mut self, idx: usize) {
         if idx < self.stack.len() {
+            let tag = self.stack.operations()[idx].tag().to_string();
             self.push_undo();
             self.stack.remove_operation(idx);
+            self.log(
+                LogSeverity::Info,
+                format!("− op [{idx}] {tag} — stack now {} ops", self.stack.len()),
+            );
+        } else {
+            self.log(
+                LogSeverity::Warn,
+                format!("remove_op({idx}): out of range (len={})", self.stack.len()),
+            );
         }
     }
 
@@ -940,6 +976,10 @@ impl App {
         };
         self.stack.replace_operation(idx, new_op);
         self.set_status(format!("reseeded op [{idx}] {tag} → seed={new_seed}"));
+        self.log(
+            LogSeverity::Info,
+            format!("⟳ reseeded op [{idx}] {tag} → seed={new_seed}"),
+        );
     }
 
     fn arch_summary(&self) -> ArchSummary {
@@ -1050,6 +1090,13 @@ impl App {
             }
             ["live"] => {
                 self.live = !self.live;
+                self.log(
+                    LogSeverity::Info,
+                    format!(
+                        "live mode {} (console)",
+                        if self.live { "▶ ON" } else { "⏹ OFF" }
+                    ),
+                );
                 format!("live = {}", self.live)
             }
             ["add", kind] => {
@@ -1287,6 +1334,22 @@ impl App {
             self.train.loss_history.remove(0);
         }
         self.train.steps = self.train.steps.saturating_add(1);
+        // Throttled logging: log every 10th training step + every accept.
+        if accept || self.train.steps.is_multiple_of(10) {
+            let final_loss = if accept { new_loss } else { cur_loss };
+            self.log(
+                if accept {
+                    LogSeverity::Success
+                } else {
+                    LogSeverity::Info
+                },
+                format!(
+                    "🎓 step {}: loss {final_loss:.4} {} op [{idx_pick}]",
+                    self.train.steps,
+                    if accept { "↓ accept" } else { "× reject" }
+                ),
+            );
+        }
     }
 
     /// Load an image file → quantize to bipolar hypervector → set as input.
@@ -1763,8 +1826,18 @@ impl App {
             self.last_trace = None;
             self.selected_op = None;
             self.set_status(format!("↶ undo (depth {})", self.undo_stack.len()));
+            self.log(
+                LogSeverity::Info,
+                format!(
+                    "↶ undo — restored {} ops (undo depth {}, redo depth {})",
+                    self.stack.len(),
+                    self.undo_stack.len(),
+                    self.redo_stack.len()
+                ),
+            );
         } else {
             self.set_status("↶ nothing to undo".to_string());
+            self.log(LogSeverity::Warn, "↶ undo: stack is empty".to_string());
         }
     }
 
@@ -1777,8 +1850,17 @@ impl App {
             self.last_trace = None;
             self.selected_op = None;
             self.set_status(format!("↷ redo (depth {})", self.redo_stack.len()));
+            self.log(
+                LogSeverity::Info,
+                format!(
+                    "↷ redo — restored {} ops (redo depth {})",
+                    self.stack.len(),
+                    self.redo_stack.len()
+                ),
+            );
         } else {
             self.set_status("↷ nothing to redo".to_string());
+            self.log(LogSeverity::Warn, "↷ redo: stack is empty".to_string());
         }
     }
 }
@@ -1813,6 +1895,10 @@ impl eframe::App for App {
             }
             if i.key_pressed(egui::Key::L) {
                 self.live = !self.live;
+                self.log(
+                    LogSeverity::Info,
+                    format!("live mode {}", if self.live { "▶ ON" } else { "⏹ OFF" }),
+                );
             }
             let template_keys = [
                 egui::Key::Num1,
@@ -2159,6 +2245,10 @@ impl eframe::App for App {
                         if resp.clicked() {
                             self.workspace = *ws;
                             self.set_status(format!("workspace → {}", ws.label()));
+                            self.log(
+                                LogSeverity::Info,
+                                format!("workspace → {}", ws.label()),
+                            );
                             // Workspace tabs ACTUALLY change behavior now.
                             match ws {
                                 Workspace::Edit => {
@@ -4863,6 +4953,13 @@ impl eframe::App for App {
                     );
                     if live_btn.clicked() {
                         self.live = !self.live;
+                        self.log(
+                            LogSeverity::Info,
+                            format!(
+                                "live mode {}",
+                                if self.live { "▶ ON" } else { "⏹ OFF" }
+                            ),
+                        );
                     }
                     ui.label(
                         egui::RichText::new("  (Space / L)")
