@@ -2121,9 +2121,17 @@ impl eframe::App for App {
                 } else {
                     ("—".to_string(), "—".to_string())
                 };
+                // Workspace badge (left-most).
+                ui.label(
+                    egui::RichText::new(self.workspace.label())
+                        .size(theme::SIZE_SMALL)
+                        .color(theme::ACCENT_BLUE)
+                        .strong(),
+                );
+                ui.separator();
                 ui.label(
                     egui::RichText::new(format!(
-                        "● template: {}  ·  dim: {}  ·  ops: {}  ·  fwd FLOPs: {flops:.2e}",
+                        "{}  ·  dim {}  ·  ops {}  ·  flops {flops:.1e}",
                         self.template,
                         self.dim,
                         self.stack.len()
@@ -2131,6 +2139,32 @@ impl eframe::App for App {
                     .size(theme::SIZE_SMALL)
                     .color(theme::TEXT_MUTED),
                 );
+                if let Some(idx) = self.selected_op {
+                    if let Some(op) = self.stack.operations().get(idx) {
+                        ui.separator();
+                        ui.label(
+                            egui::RichText::new(format!("✎ [{}] {}", idx, op.tag()))
+                                .size(theme::SIZE_SMALL)
+                                .color(theme::op_color(op.tag()))
+                                .strong(),
+                        );
+                    }
+                }
+                if self.workspace == Workspace::Train && self.train.steps > 0 {
+                    ui.separator();
+                    let loss = self
+                        .train
+                        .loss_history
+                        .last()
+                        .map(|l| format!("loss {l:.4}"))
+                        .unwrap_or_default();
+                    ui.label(
+                        egui::RichText::new(format!("🎓 step {} · {}", self.train.steps, loss))
+                            .size(theme::SIZE_SMALL)
+                            .color(theme::ACCENT_PURPLE)
+                            .strong(),
+                    );
+                }
                 ui.add_space(theme::SPACE_MD);
                 ui.label(
                     egui::RichText::new(format!("CPU {cpu_txt}  ·  RAM {ram_txt}"))
