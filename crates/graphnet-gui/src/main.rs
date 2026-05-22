@@ -5145,18 +5145,57 @@ impl eframe::App for App {
                             section_heading(ui, "cos_sim history");
                             ui.add_space(theme::SPACE_SM);
                             card(ui, |ui| {
-                                sparkline(ui, self.cos_sim_history.iter().copied(), 70.0);
+                                // egui_plot replaces hand-painted sparkline (#776).
+                                // Real plot widget with hover read-out, log axes
+                                // (off), and zero-line markers.
+                                use egui_plot::{Line, Plot, PlotPoints};
+                                let pts: PlotPoints = self
+                                    .cos_sim_history
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, v)| [i as f64, *v])
+                                    .collect();
+                                Plot::new("cos_sim_plot")
+                                    .height(80.0)
+                                    .show_axes([false, true])
+                                    .show_grid([false, true])
+                                    .allow_drag(false)
+                                    .allow_zoom(false)
+                                    .allow_scroll(false)
+                                    .show(ui, |plot_ui| {
+                                        plot_ui.line(
+                                            Line::new(pts)
+                                                .color(theme::ACCENT_BLUE)
+                                                .width(1.5),
+                                        );
+                                    });
                             });
 
                             ui.add_space(theme::SPACE_MD);
                             section_heading(ui, "latency history (ms)");
                             ui.add_space(theme::SPACE_SM);
                             card(ui, |ui| {
-                                latency_sparkline(
-                                    ui,
-                                    self.latency_history.iter().copied(),
-                                    70.0,
-                                );
+                                use egui_plot::{Line, Plot, PlotPoints};
+                                let pts: PlotPoints = self
+                                    .latency_history
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, v)| [i as f64, *v])
+                                    .collect();
+                                Plot::new("latency_plot")
+                                    .height(80.0)
+                                    .show_axes([false, true])
+                                    .show_grid([false, true])
+                                    .allow_drag(false)
+                                    .allow_zoom(false)
+                                    .allow_scroll(false)
+                                    .show(ui, |plot_ui| {
+                                        plot_ui.line(
+                                            Line::new(pts)
+                                                .color(theme::ACCENT_PURPLE)
+                                                .width(1.5),
+                                        );
+                                    });
                             });
                         }
 
