@@ -2667,6 +2667,26 @@ impl eframe::App for App {
                     self.show_left_panel = !self.show_left_panel;
                 }
             }
+            // Arrow-key navigation through ops in the 3D graph.
+            // ← previous op, → next op, ↑/↓ also work.
+            if !i.modifiers.shift && !i.modifiers.command && !i.modifiers.ctrl {
+                let n = self.stack.len();
+                if n > 0 {
+                    let cur = self.selected_op.unwrap_or(0);
+                    if i.key_pressed(egui::Key::ArrowLeft) || i.key_pressed(egui::Key::ArrowUp) {
+                        let prev = if cur == 0 { n - 1 } else { cur - 1 };
+                        self.selected_op = Some(prev);
+                        self.last_node_click_at = Some(std::time::Instant::now());
+                        self.last_node_clicked = Some(prev);
+                    }
+                    if i.key_pressed(egui::Key::ArrowRight) || i.key_pressed(egui::Key::ArrowDown) {
+                        let next = (cur + 1) % n;
+                        self.selected_op = Some(next);
+                        self.last_node_click_at = Some(std::time::Instant::now());
+                        self.last_node_clicked = Some(next);
+                    }
+                }
+            }
             if (i.modifiers.command || i.modifiers.ctrl)
                 && !i.modifiers.shift
                 && i.key_pressed(egui::Key::Z)
@@ -7928,24 +7948,24 @@ fn architecture_graph_3d(
         let size_mul = (3.0 / depth.max(0.1)).clamp(0.5, 1.6);
         match kind {
             Node::Input => {
-                let r = 24.0 * size_mul;
+                let r = 30.0 * size_mul;
                 shaded_node(&painter, *pos, r, theme::ACCENT_BLUE, "INPUT", size_mul);
                 arch_hit_test(*pos, r, click_pos, _right_click_pos, hover_pos, &painter, ArchClick::Input, &mut clicked);
             }
             Node::Bundle => {
-                let r = 24.0 * size_mul;
+                let r = 30.0 * size_mul;
                 shaded_node(&painter, *pos, r, theme::ACCENT_PURPLE, "BUNDLE", size_mul);
                 arch_hit_test(*pos, r, click_pos, _right_click_pos, hover_pos, &painter, ArchClick::Bundle, &mut clicked);
             }
             Node::Output => {
-                let r = 24.0 * size_mul;
+                let r = 30.0 * size_mul;
                 shaded_node(&painter, *pos, r, theme::ACCENT_MID, "OUT", size_mul);
                 arch_hit_test(*pos, r, click_pos, _right_click_pos, hover_pos, &painter, ArchClick::Output, &mut clicked);
             }
             Node::Op(i, tag) => {
                 let colour = theme::op_color(tag);
                 let is_selected = selected == Some(*i);
-                let r = 22.0 * size_mul;
+                let r = 28.0 * size_mul;
                 if is_selected {
                     // Selected: solid colour with subtle outer glow.
                     painter.circle_filled(*pos, r + 4.0, colour.gamma_multiply(0.25));
