@@ -5059,25 +5059,25 @@ fn op_chip_actions_with_drag(
                 ui.label(
                     egui::RichText::new(format!("⋮ {idx:02}"))
                         .color(theme::TEXT_MUTED)
-                        .size(theme::SIZE_TINY)
+                        .size(9.5)
                         .monospace(),
                 );
                 ui.label(
                     egui::RichText::new(tag)
                         .color(fg)
-                        .size(theme::SIZE_BODY)
+                        .size(theme::SIZE_SMALL)
                         .strong(),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let remove = ui.add(
                         egui::Button::new(
                             egui::RichText::new("×")
-                                .size(theme::SIZE_BODY)
+                                .size(theme::SIZE_SMALL)
                                 .color(theme::TEXT_MUTED),
                         )
                         .fill(egui::Color32::TRANSPARENT)
                         .stroke(egui::Stroke::NONE)
-                        .min_size(egui::vec2(20.0, 20.0)),
+                        .min_size(egui::vec2(16.0, 16.0)),
                     );
                     if remove.clicked() {
                         action.remove = true;
@@ -5087,12 +5087,12 @@ fn op_chip_actions_with_drag(
                             .add(
                                 egui::Button::new(
                                     egui::RichText::new("⟳")
-                                        .size(theme::SIZE_SMALL)
+                                        .size(theme::SIZE_TINY)
                                         .color(fg),
                                 )
                                 .fill(egui::Color32::TRANSPARENT)
                                 .stroke(egui::Stroke::NONE)
-                                .min_size(egui::vec2(20.0, 20.0)),
+                                .min_size(egui::vec2(16.0, 16.0)),
                             )
                             .on_hover_text("reseed key");
                         if reseed.clicked() {
@@ -5119,7 +5119,11 @@ fn op_chip_actions_with_drag(
     }
 
     // Whole-row drag detection.
-    let row_resp = ui.interact(resp.rect, egui::Id::new(("op_chip_drag", idx)), egui::Sense::drag());
+    let row_resp = ui.interact(
+        resp.rect,
+        egui::Id::new(("op_chip_drag", idx)),
+        egui::Sense::drag(),
+    );
     if row_resp.drag_started() {
         action.start_drag = true;
     }
