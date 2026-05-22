@@ -1813,6 +1813,7 @@ impl eframe::App for App {
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false; 2])
+                    .max_height(f32::INFINITY)
                     .show(ui, |ui| {
                 // Mode-aware left panel content.
                 let mode_label = self.tool_mode.label();
@@ -2770,6 +2771,7 @@ impl eframe::App for App {
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false; 2])
+                    .max_height(f32::INFINITY)
                     .show(ui, |ui| {
                         section_heading(ui, "Action log");
                         ui.add_space(theme::SPACE_SM);
@@ -3035,6 +3037,7 @@ impl eframe::App for App {
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false; 2])
+                    .max_height(f32::INFINITY)
                     .show(ui, |ui| {
                 // Two-column layout: Input (left) + Output preview (right)
                 // when there's a recent forward. Single column otherwise.
