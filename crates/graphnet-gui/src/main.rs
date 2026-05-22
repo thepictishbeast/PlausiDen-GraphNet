@@ -961,7 +961,9 @@ impl App {
         if self.stack.len() == 0 {
             self.log(
                 LogSeverity::Warn,
-                "forward skipped — stack has zero ops".to_string(),
+                "forward skipped — stack is empty. Press A/D/F/P/N to add an op, \
+                 or 1-9/0 to load a template."
+                    .to_string(),
             );
             return;
         }
@@ -3430,6 +3432,45 @@ impl eframe::App for App {
                             submit = Some(std::mem::take(&mut self.console_input));
                             self.console_history_cursor = -1;
                             resp.request_focus();
+                        }
+                        // Tab → cycle through commands matching the prefix.
+                        if resp.has_focus()
+                            && ui.input(|i| i.key_pressed(egui::Key::Tab))
+                        {
+                            const COMMANDS: &[&str] = &[
+                                "help", "fwd", "forward", "live", "add", "rm",
+                                "remove", "reseed", "dim", "template", "regen",
+                                "reset", "undo", "redo", "save", "load", "png",
+                                "stat", "clear",
+                            ];
+                            let prefix = self.console_input.trim();
+                            if !prefix.is_empty() {
+                                let parts: Vec<&str> = prefix.splitn(2, ' ').collect();
+                                let first = parts[0];
+                                let matches: Vec<&&str> = COMMANDS
+                                    .iter()
+                                    .filter(|c| c.starts_with(first))
+                                    .collect();
+                                if matches.len() == 1 {
+                                    self.console_input = matches[0].to_string();
+                                    if !matches[0].starts_with("help")
+                                        && !matches[0].starts_with("fwd")
+                                        && !matches[0].starts_with("forward")
+                                        && !matches[0].starts_with("live")
+                                        && !matches[0].starts_with("regen")
+                                        && !matches[0].starts_with("reset")
+                                        && !matches[0].starts_with("undo")
+                                        && !matches[0].starts_with("redo")
+                                        && !matches[0].starts_with("save")
+                                        && !matches[0].starts_with("load")
+                                        && !matches[0].starts_with("png")
+                                        && !matches[0].starts_with("stat")
+                                        && !matches[0].starts_with("clear")
+                                    {
+                                        self.console_input.push(' ');
+                                    }
+                                }
+                            }
                         }
                         // Up arrow → recall previous command.
                         if resp.has_focus()
