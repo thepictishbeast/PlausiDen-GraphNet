@@ -2495,7 +2495,7 @@ impl eframe::App for App {
                                 egui::Stroke::NONE
                             })
                             .rounding(egui::Rounding::same(theme::RADIUS_SM))
-                            .min_size(egui::vec2(0.0, 28.0)),
+                            .min_size(egui::vec2(0.0, 22.0)),
                         );
                         if pulse.is_some() {
                             ctx.request_repaint();
@@ -2927,7 +2927,7 @@ impl eframe::App for App {
         // Blender/FreeCAD-style tool palette: icon-only column on the far
         // left for mode switching.
         egui::SidePanel::left("tool_palette")
-            .exact_width(44.0)
+            .exact_width(32.0)
             .resizable(false)
             .frame(
                 egui::Frame::none()
@@ -2968,7 +2968,7 @@ impl eframe::App for App {
                                     egui::Stroke::NONE
                                 })
                                 .rounding(egui::Rounding::same(theme::RADIUS_SM))
-                                .min_size(egui::vec2(32.0, 32.0)),
+                                .min_size(egui::vec2(24.0, 24.0)),
                             )
                             .on_hover_text(mode.label());
                         if resp.clicked() {
@@ -4579,7 +4579,7 @@ impl eframe::App for App {
                                         .strong(),
                                 )
                                 .fill(theme::ACCENT_PURPLE)
-                                .min_size(egui::vec2(90.0, 32.0)),
+                                .min_size(egui::vec2(70.0, 24.0)),
                             )
                             .clicked()
                         {
@@ -5318,7 +5318,7 @@ impl eframe::App for App {
                         )
                         .fill(pulsed_fill)
                         .rounding(egui::Rounding::same(theme::RADIUS_MD))
-                        .min_size(egui::vec2(130.0, 32.0)),
+                        .min_size(egui::vec2(100.0, 26.0)),
                     );
                     if btn.clicked() {
                         self.run_forward();
@@ -5343,7 +5343,7 @@ impl eframe::App for App {
                         .fill(live_color)
                         .stroke(egui::Stroke::new(1.0, theme::ACCENT_PURPLE))
                         .rounding(egui::Rounding::same(theme::RADIUS_MD))
-                        .min_size(egui::vec2(95.0, 32.0)),
+                        .min_size(egui::vec2(75.0, 26.0)),
                     );
                     if live_btn.clicked() {
                         self.live = !self.live;

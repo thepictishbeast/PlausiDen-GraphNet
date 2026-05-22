@@ -5,28 +5,30 @@
 use eframe::egui;
 
 // --- Spacing scale (px) --------------------------------------------------
+// Density pass iter 122: tightened ~30% to match JetBrains/VS-Code density.
+// Owner: "notice how much smaller everything is compared to your app."
 
-pub const SPACE_XS: f32 = 3.0;
-pub const SPACE_SM: f32 = 6.0;
-pub const SPACE_MD: f32 = 10.0;
-pub const SPACE_LG: f32 = 14.0;
-pub const SPACE_XL: f32 = 20.0;
+pub const SPACE_XS: f32 = 2.0;
+pub const SPACE_SM: f32 = 4.0;
+pub const SPACE_MD: f32 = 7.0;
+pub const SPACE_LG: f32 = 10.0;
+pub const SPACE_XL: f32 = 14.0;
 
 // --- Typography (px) -----------------------------------------------------
-// Compact sizing pass (iter 26). Owner: "everything is big like its made
-// for an old person". ~25% reduction across the typography scale.
+// Iter 122: dropped further to match JetBrains menu/editor density.
+// Previous pass (iter 26) was 18/14.5/12.5/11/9.5.
 
-pub const SIZE_H1: f32 = 18.0;
-pub const SIZE_H2: f32 = 14.5;
-pub const SIZE_BODY: f32 = 12.5;
-pub const SIZE_SMALL: f32 = 11.0;
-pub const SIZE_TINY: f32 = 9.5;
+pub const SIZE_H1: f32 = 14.0;
+pub const SIZE_H2: f32 = 12.0;
+pub const SIZE_BODY: f32 = 11.0;
+pub const SIZE_SMALL: f32 = 10.0;
+pub const SIZE_TINY: f32 = 9.0;
 
 // --- Rounded corners ------------------------------------------------------
 
-pub const RADIUS_SM: f32 = 6.0;
-pub const RADIUS_MD: f32 = 10.0;
-pub const RADIUS_LG: f32 = 16.0;
+pub const RADIUS_SM: f32 = 4.0;
+pub const RADIUS_MD: f32 = 6.0;
+pub const RADIUS_LG: f32 = 10.0;
 pub const RADIUS_PILL: f32 = 999.0;
 
 // --- Palette --------------------------------------------------------------
