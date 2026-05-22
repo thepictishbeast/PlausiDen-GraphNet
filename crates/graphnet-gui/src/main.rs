@@ -115,6 +115,10 @@ struct App {
     zoom_modal_scale: f32,
     /// A/B compare: snapshot of a stack to compare against current (#711).
     snapshot_stack: Option<Stack>,
+    /// Show the left arch panel? (User can collapse it via [Tab].)
+    show_left_panel: bool,
+    /// Show the right action/contrib panel?
+    show_right_panel: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -592,6 +596,8 @@ impl App {
             workspace: Workspace::Edit,
             zoom_modal_scale: 1.0,
             snapshot_stack: None,
+            show_left_panel: true,
+            show_right_panel: true,
         };
         app.load_template("standard");
         // Try to restore previous session.
@@ -1462,6 +1468,14 @@ impl eframe::App for App {
             if i.key_pressed(egui::Key::Backtick) {
                 self.show_console = !self.show_console;
             }
+            // Tab toggles left panel; Shift+Tab toggles right panel.
+            if i.key_pressed(egui::Key::Tab) {
+                if i.modifiers.shift {
+                    self.show_right_panel = !self.show_right_panel;
+                } else {
+                    self.show_left_panel = !self.show_left_panel;
+                }
+            }
             if (i.modifiers.command || i.modifiers.ctrl)
                 && !i.modifiers.shift
                 && i.key_pressed(egui::Key::Z)
@@ -1922,6 +1936,7 @@ impl eframe::App for App {
                 });
             });
 
+        if self.show_left_panel {
         egui::SidePanel::left("arch")
             .min_width(280.0)
             .max_width(340.0)
@@ -2447,6 +2462,7 @@ impl eframe::App for App {
                 }
                     }); // close ScrollArea::vertical
             });
+        } // show_left_panel
 
         // Console / REPL pane (#747) — bottom-docked when shown.
         if self.show_console {
@@ -2936,6 +2952,7 @@ impl eframe::App for App {
 
         // Right panel: action log + sparklines + per-op inspector.
         // Pulls the noise out of the central panel + uses previously empty space.
+        if self.show_right_panel {
         egui::SidePanel::right("right")
             .min_width(320.0)
             .max_width(420.0)
@@ -3204,6 +3221,7 @@ impl eframe::App for App {
                         }
                     });
             });
+        } // show_right_panel
 
         egui::CentralPanel::default()
             .frame(
