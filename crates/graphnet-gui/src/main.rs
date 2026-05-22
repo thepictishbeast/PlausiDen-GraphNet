@@ -3494,13 +3494,29 @@ impl eframe::App for App {
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let flops = flop_estimate(self.dim, self.stack.len());
-                let (cpu_txt, ram_txt) = if let Some(s) = &self.last_sample {
+                // Resource readouts: CPU%, app RAM, host RAM used/total/free.
+                let (cpu_txt, ram_txt, host_ram_txt) = if let Some(s) = &self.last_sample {
+                    let mb = |b: u64| (b / 1024 / 1024) as f64;
+                    let gb = |b: u64| mb(b) / 1024.0;
+                    let host_used = s.host_ram_used;
+                    let host_total = s.host_ram_total;
+                    let host_free = host_total.saturating_sub(host_used);
                     (
                         format!("{:.0}%", s.host_cpu_load * 100.0),
-                        format!("{} MB", s.proc_ram_used / 1024 / 1024),
+                        format!("app {:.0} MB", mb(s.proc_ram_used)),
+                        format!(
+                            "host {:.1}/{:.1} GB · {:.1} GB free",
+                            gb(host_used),
+                            gb(host_total),
+                            gb(host_free)
+                        ),
                     )
                 } else {
-                    ("—".to_string(), "—".to_string())
+                    (
+                        "—".to_string(),
+                        "—".to_string(),
+                        "—".to_string(),
+                    )
                 };
                 // Workspace badge (left-most).
                 ui.label(
@@ -3576,10 +3592,16 @@ impl eframe::App for App {
                 }
                 ui.add_space(theme::SPACE_MD);
                 ui.label(
-                    egui::RichText::new(format!("CPU {cpu_txt}  ·  RAM {ram_txt}"))
-                        .size(theme::SIZE_SMALL)
-                        .color(theme::ACCENT_BLUE)
-                        .monospace(),
+                    egui::RichText::new(format!(
+                        "CPU {cpu_txt}  ·  {ram_txt}  ·  {host_ram_txt}"
+                    ))
+                    .size(theme::SIZE_SMALL)
+                    .color(theme::ACCENT_BLUE)
+                    .monospace(),
+                )
+                .on_hover_text(
+                    "host = total system memory used / total / free\n\
+                     app = how much RAM this process consumes",
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let latency = self
