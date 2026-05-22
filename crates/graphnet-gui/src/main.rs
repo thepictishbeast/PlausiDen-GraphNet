@@ -1020,6 +1020,297 @@ impl App {
         self.dirty_since = Some(std::time::Instant::now());
     }
 
+    /// Render the 3D architecture viewport block — viewport + summary row +
+    /// inline editor + add-op palette + toolbar/click handling.
+    /// Extracted iter 147 (#788) so this block can be FIRST in the central
+    /// panel per owner direction: "make sure 3D is the main focus and is
+    /// the most visible."
+    fn render_arch_3d_section(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        // Architecture (3D) header with auto-rotate toggle.
+        ui.horizontal(|ui| {
+            section_heading(ui, "Architecture (3D)");
+            ui.with_layout(
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
+                    ui.checkbox(&mut self.arch_autorotate, "auto-rotate");
+                },
+            );
+        });
+        // Always-visible architecture summary row — counts each op kind.
+        {
+            let mut counts: std::collections::BTreeMap<&str, usize> =
+                std::collections::BTreeMap::new();
+            for op in self.stack.operations() {
+                *counts.entry(op.tag()).or_insert(0) += 1;
+            }
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    egui::RichText::new(format!("Σ {} ops:", self.stack.len()))
+                        .size(theme::SIZE_TINY)
+                        .color(theme::TEXT_MUTED),
+                );
+                for (tag, n) in &counts {
+                    ui.label(
+                        egui::RichText::new(format!("{}×{}", n, tag))
+                            .size(theme::SIZE_TINY)
+                            .background_color(theme::op_color(tag).gamma_multiply(0.18))
+                            .color(theme::op_color(tag))
+                            .monospace()
+                            .strong(),
+                    );
+                    ui.add_space(2.0);
+                }
+                if counts.is_empty() {
+                    ui.label(
+                        egui::RichText::new("(empty)")
+                            .size(theme::SIZE_TINY)
+                            .color(theme::TEXT_DIM)
+                            .italics(),
+                    );
+                }
+            });
+            ui.add_space(theme::SPACE_XS);
+        }
+        ui.add_space(theme::SPACE_SM);
+        let op_tags: Vec<String> = self
+            .stack
+            .operations()
+            .iter()
+            .map(|op| op.tag().to_string())
+            .collect();
+        if self.arch_autorotate {
+            self.arch_yaw += 0.008;
+            self.arch_pitch = 0.2 + (self.arch_yaw * 0.5).sin() * 0.25;
+            ctx.request_repaint();
+        }
+        let mut yaw = self.arch_yaw;
+        let mut pitch = self.arch_pitch;
+        let selected = self.selected_op;
+        let mut graph_click: Option<ArchClick> = None;
+        let particle_phase = self.last_forward_at.and_then(|t| {
+            let elapsed = t.elapsed().as_secs_f32();
+            if elapsed < 0.8 {
+                Some(elapsed / 0.8)
+            } else {
+                None
+            }
+        });
+        if particle_phase.is_some() {
+            ctx.request_repaint();
+        }
+        let zoom = self.arch_zoom;
+        let autorotate_state = self.arch_autorotate;
+        let mut roll = self.arch_roll;
+        let mut toolbar_action: Option<ArchToolAction> = None;
+        card(ui, |ui| {
+            let contrib_vec: Option<Vec<f64>> = self.last_trace.as_ref().map(|t| {
+                t.per_op
+                    .iter()
+                    .map(|o| cos_sim(&o.output, &t.bundled).unwrap_or(0.0))
+                    .collect()
+            });
+            let contrib_slice = contrib_vec.as_deref();
+            let click_flash = self.last_node_click_at.and_then(|t| {
+                let age = t.elapsed().as_secs_f32();
+                if age < 0.5 {
+                    Some((self.last_node_clicked?, 1.0 - age / 0.5))
+                } else {
+                    None
+                }
+            });
+            if click_flash.is_some() {
+                ctx.request_repaint();
+            }
+            let (clicked, new_yaw, new_pitch, new_roll, action) = architecture_graph_3d(
+                ui,
+                &op_tags,
+                selected,
+                yaw,
+                pitch,
+                roll,
+                zoom,
+                autorotate_state,
+                particle_phase,
+                contrib_slice,
+                click_flash,
+            );
+            if let Some(click) = clicked {
+                graph_click = Some(click);
+            }
+            yaw = new_yaw;
+            pitch = new_pitch;
+            roll = new_roll;
+            toolbar_action = action;
+        });
+        self.arch_yaw = yaw;
+        self.arch_pitch = pitch;
+        self.arch_roll = roll;
+
+        // Inline editor for the currently-selected op.
+        if let Some(sel_idx) = self.selected_op {
+            if sel_idx < self.stack.len() {
+                let tag = self.stack.operations()[sel_idx].tag().to_string();
+                let colour = theme::op_color(&tag);
+                ui.add_space(theme::SPACE_SM);
+                card(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!("✎ Selected [{sel_idx}] {tag}"))
+                                .size(theme::SIZE_BODY)
+                                .color(colour)
+                                .strong(),
+                        );
+                        ui.add_space(theme::SPACE_MD);
+                        if matches!(tag.as_str(), "dense" | "hrr_bind" | "permute")
+                            && mini_button(ui, "⟳ reseed", colour).clicked()
+                        {
+                            self.reseed_op(sel_idx);
+                        }
+                        if mini_button(ui, "⎘ duplicate", theme::ACCENT_BLUE).clicked() {
+                            if let Some(op) = self.stack.operations().get(sel_idx).cloned() {
+                                self.push_undo();
+                                self.stack.insert_operation(sel_idx + 1, op);
+                                self.set_status(format!("duplicated op [{sel_idx}]"));
+                            }
+                        }
+                        if mini_button(ui, "↑ up", theme::TEXT_MUTED).clicked() && sel_idx > 0 {
+                            self.push_undo();
+                            self.stack.move_operation(sel_idx, sel_idx - 1);
+                            self.selected_op = Some(sel_idx - 1);
+                        }
+                        if mini_button(ui, "↓ down", theme::TEXT_MUTED).clicked()
+                            && sel_idx + 1 < self.stack.len()
+                        {
+                            self.push_undo();
+                            self.stack.move_operation(sel_idx, sel_idx + 1);
+                            self.selected_op = Some(sel_idx + 1);
+                        }
+                        if mini_button(ui, "× remove", theme::ACCENT_PURPLE).clicked() {
+                            self.remove_op(sel_idx);
+                            self.selected_op = None;
+                        }
+                    });
+                    ui.add_space(theme::SPACE_XS);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(
+                            egui::RichText::new("convert to:")
+                                .color(theme::TEXT_MUTED)
+                                .size(theme::SIZE_SMALL),
+                        );
+                        for new_kind in ["identity", "dense", "hrr_bind", "permute", "negate"] {
+                            if new_kind == tag {
+                                continue;
+                            }
+                            if mini_button(ui, new_kind, theme::op_color(new_kind)).clicked() {
+                                let seed = (sel_idx as u64).wrapping_mul(31).wrapping_add(1_000);
+                                let new_op = match new_kind {
+                                    "identity" => Operation::Identity,
+                                    "dense" => Operation::Dense {
+                                        key: Hypervector::random_seeded(self.dim, seed),
+                                    },
+                                    "hrr_bind" => Operation::HrrBind {
+                                        key: Hypervector::random_seeded(self.dim, seed + 100),
+                                    },
+                                    "permute" => Operation::Permute {
+                                        shift: ((seed as usize).wrapping_mul(7) + 13)
+                                            % self.dim.max(1),
+                                    },
+                                    "negate" => Operation::Negate,
+                                    _ => Operation::Identity,
+                                };
+                                self.push_undo();
+                                self.stack.replace_operation(sel_idx, new_op);
+                                self.set_status(format!("converted [{sel_idx}] → {new_kind}"));
+                            }
+                        }
+                    });
+                });
+            }
+        }
+
+        // Quick-add palette right under the 3D graph.
+        ui.add_space(theme::SPACE_SM);
+        card(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    egui::RichText::new("➕ Add op to graph:")
+                        .size(theme::SIZE_SMALL)
+                        .color(theme::TEXT_MUTED),
+                );
+                for kind in ["identity", "dense", "hrr_bind", "permute", "negate"] {
+                    if mini_button(ui, kind, theme::op_color(kind))
+                        .on_hover_text(format!("click to add {kind} to the stack"))
+                        .clicked()
+                    {
+                        self.add_op(kind);
+                    }
+                }
+            });
+        });
+
+        if let Some(action) = toolbar_action {
+            match action {
+                ArchToolAction::Reset => {
+                    self.arch_yaw = 0.6;
+                    self.arch_pitch = 0.15;
+                    self.arch_roll = 0.0;
+                    self.arch_zoom = 1.0;
+                    self.set_status("3D view reset".to_string());
+                }
+                ArchToolAction::ToggleAutorotate => {
+                    self.arch_autorotate = !self.arch_autorotate;
+                    self.set_status(format!(
+                        "auto-rotate: {}",
+                        if self.arch_autorotate { "on" } else { "off" }
+                    ));
+                }
+                ArchToolAction::ZoomIn => {
+                    self.arch_zoom = (self.arch_zoom * 1.2).min(3.0);
+                    self.set_status(format!("zoom: {:.2}x", self.arch_zoom));
+                }
+                ArchToolAction::ZoomOut => {
+                    self.arch_zoom = (self.arch_zoom / 1.2).max(0.5);
+                    self.set_status(format!("zoom: {:.2}x", self.arch_zoom));
+                }
+            }
+        }
+        if let Some(click) = graph_click {
+            match click {
+                ArchClick::Op(idx) => {
+                    self.selected_op = if self.selected_op == Some(idx) {
+                        None
+                    } else {
+                        Some(idx)
+                    };
+                    self.last_node_click_at = Some(std::time::Instant::now());
+                    self.last_node_clicked = Some(idx);
+                    ctx.request_repaint();
+                }
+                ArchClick::Input => {
+                    self.zoom_target = Some(ZoomTarget::Input);
+                    self.log(
+                        LogSeverity::Info,
+                        "3D: opened INPUT zoom modal".to_string(),
+                    );
+                }
+                ArchClick::Bundle | ArchClick::Output => {
+                    if self.last_output.is_some() {
+                        self.zoom_target = Some(ZoomTarget::Output);
+                        self.log(
+                            LogSeverity::Info,
+                            "3D: opened OUTPUT zoom modal".to_string(),
+                        );
+                    } else {
+                        self.log(
+                            LogSeverity::Warn,
+                            "3D: no output yet — press Space to run forward".to_string(),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     fn add_op(&mut self, kind: &str) {
         self.push_undo();
         let new_idx = self.stack.len();
@@ -5954,6 +6245,15 @@ impl eframe::App for App {
                     .auto_shrink([false; 2])
                     .max_height(f32::INFINITY)
                     .show(ui, |ui| {
+                // 3D viewport is the DOMINANT focal area now — rendered FIRST
+                // inside the central panel per owner direction. Inline editor,
+                // Add-op palette, and toolbar-action handling all live inside
+                // the same block, so the 3D + its direct controls cluster at
+                // the top. Input/Output cards + Run/Live buttons come BELOW.
+                self.render_arch_3d_section(ui, ctx);
+
+                ui.add_space(theme::SPACE_LG);
+
                 // Two-column layout: Input (left) + Output preview (right)
                 // when there's a recent forward. Single column otherwise.
                 let input_clone = self.input.clone();
@@ -6245,18 +6545,11 @@ impl eframe::App for App {
 
                 ui.add_space(theme::SPACE_LG);
 
-                // Architecture graph viz (3D-projected, rotatable).
-                ui.horizontal(|ui| {
-                    section_heading(ui, "Architecture (3D)");
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            ui.checkbox(&mut self.arch_autorotate, "auto-rotate");
-                        },
-                    );
-                });
-                // Always-visible architecture summary row — counts each op kind.
-                {
+                // (3D viewport moved to TOP of central panel in iter 147.
+                // Original block here is now disabled — see render_arch_3d_section.)
+                if false {
+                    // Always-visible architecture summary row — counts each op kind.
+                    {
                     let mut counts: std::collections::BTreeMap<&str, usize> =
                         std::collections::BTreeMap::new();
                     for op in self.stack.operations() {
@@ -6555,6 +6848,7 @@ impl eframe::App for App {
                         }
                     }
                 }
+                } // end of `if false {` — disabled duplicate 3D block.
 
                 // (Duplicate Output card below 3D viewport REMOVED in iter 119
                 // — owner: "there is another output below the 3d window".
