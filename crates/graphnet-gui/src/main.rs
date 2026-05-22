@@ -2377,6 +2377,212 @@ impl eframe::App for App {
             ctx.request_repaint();
         }
 
+        // Menu bar (JetBrains/FreeCAD/Blender consensus) — full menus
+        // above the existing hero ribbon.
+        egui::TopBottomPanel::top("menubar")
+            .frame(egui::Frame::none().fill(theme::BG_CARD))
+            .resizable(false)
+            .show_separator_line(false)
+            .show(ctx, |ui| {
+                egui::menu::bar(ui, |ui| {
+                    ui.menu_button("File", |ui| {
+                        if ui.button("📋 New from template…  Ctrl+N").clicked() {
+                            self.show_templates_popup = true;
+                            ui.close_menu();
+                        }
+                        if ui.button("⬚ Blank stack").clicked() {
+                            self.push_undo();
+                            self.template = "blank";
+                            self.stack = Stack::new(self.dim);
+                            ui.close_menu();
+                        }
+                        ui.separator();
+                        if ui.button("📂 Open YAML…  Ctrl+O").clicked() {
+                            self.load_yaml();
+                            ui.close_menu();
+                        }
+                        if ui.button("💾 Save YAML…  Ctrl+S").clicked() {
+                            self.save_yaml();
+                            ui.close_menu();
+                        }
+                        if ui.button("🖼 Export PNG…  Ctrl+E").clicked() {
+                            self.export_png();
+                            ui.close_menu();
+                        }
+                        ui.separator();
+                        if ui.button("✕ Quit").clicked() {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                            ui.close_menu();
+                        }
+                    });
+                    ui.menu_button("Edit", |ui| {
+                        if ui.button("↶ Undo  Ctrl+Z").clicked() {
+                            self.undo();
+                            ui.close_menu();
+                        }
+                        if ui.button("↷ Redo  Ctrl+Shift+Z").clicked() {
+                            self.redo();
+                            ui.close_menu();
+                        }
+                        ui.separator();
+                        if ui.button("🗑 Reset stack").clicked() {
+                            self.reset_stack();
+                            ui.close_menu();
+                        }
+                        if ui.button("🎲 Regenerate input  R").clicked() {
+                            self.regenerate_input();
+                            ui.close_menu();
+                        }
+                    });
+                    ui.menu_button("View", |ui| {
+                        ui.checkbox(&mut self.show_left_panel, "Left panel  Tab");
+                        ui.checkbox(&mut self.show_right_panel, "Right panel  ⇧Tab");
+                        ui.checkbox(&mut self.show_console, "Console  `");
+                        ui.checkbox(&mut self.show_floating_stats, "Floating stats");
+                        ui.checkbox(&mut self.show_floating_minihelp, "Floating shortcuts");
+                        ui.separator();
+                        ui.checkbox(&mut self.arch_autorotate, "Auto-rotate 3D");
+                        ui.checkbox(&mut self.live, "Live mode  L");
+                    });
+                    ui.menu_button("Tools", |ui| {
+                        ui.label(
+                            egui::RichText::new("Save slot")
+                                .color(theme::TEXT_MUTED)
+                                .size(theme::SIZE_TINY),
+                        );
+                        for i in 0..4_usize {
+                            let letter = (b'A' + i as u8) as char;
+                            if ui
+                                .button(format!("⌘{} → save to slot {}", i + 1, letter))
+                                .clicked()
+                            {
+                                self.slots[i] = Some(self.stack.clone());
+                                self.set_status(format!(
+                                    "saved current stack to slot {letter}"
+                                ));
+                                ui.close_menu();
+                            }
+                        }
+                        ui.separator();
+                        ui.label(
+                            egui::RichText::new("Recall slot")
+                                .color(theme::TEXT_MUTED)
+                                .size(theme::SIZE_TINY),
+                        );
+                        for i in 0..4_usize {
+                            let letter = (b'A' + i as u8) as char;
+                            let has = self.slots[i].is_some();
+                            ui.add_enabled_ui(has, |ui| {
+                                if ui
+                                    .button(format!("⌘⇧{} ← recall slot {}", i + 1, letter))
+                                    .clicked()
+                                {
+                                    if let Some(s) = self.slots[i].clone() {
+                                        self.push_undo();
+                                        self.dim = s.dim();
+                                        self.stack = s;
+                                        self.dim_slider = self.dim;
+                                        self.active_slot = i;
+                                        self.set_status(format!("recalled slot {letter}"));
+                                    }
+                                    ui.close_menu();
+                                }
+                            });
+                        }
+                    });
+                    ui.menu_button("Train", |ui| {
+                        if ui.button("🎯 Set output as target").clicked() {
+                            if let Some(out) = &self.last_output {
+                                self.train.target = Some(out.clone());
+                                self.train.loss_history.clear();
+                                self.train.steps = 0;
+                            }
+                            ui.close_menu();
+                        }
+                        ui.separator();
+                        if ui.button("⏵ Step").clicked() {
+                            self.train_step();
+                            ui.close_menu();
+                        }
+                        if ui.button("⏩ 10 steps").clicked() {
+                            for _ in 0..10 {
+                                self.train_step();
+                            }
+                            ui.close_menu();
+                        }
+                        if ui.button("🏁 Run to converge").clicked() {
+                            for _ in 0..500 {
+                                self.train_step();
+                                if let Some(&l) = self.train.loss_history.last() {
+                                    if l < 0.05 {
+                                        break;
+                                    }
+                                }
+                            }
+                            ui.close_menu();
+                        }
+                        ui.separator();
+                        if ui.button("↺ Reset training").clicked() {
+                            self.train.loss_history.clear();
+                            self.train.steps = 0;
+                            ui.close_menu();
+                        }
+                    });
+                    ui.menu_button("Help", |ui| {
+                        if ui.button("📖 Walkthrough").clicked() {
+                            self.walkthrough_step = Some(0);
+                            ui.close_menu();
+                        }
+                        if ui.button("🎬 Demo").clicked() {
+                            if self.demo.is_none() {
+                                self.start_demo();
+                            }
+                            ui.close_menu();
+                        }
+                        if ui.button("❓ Help / shortcuts  H").clicked() {
+                            self.show_help = true;
+                            ui.close_menu();
+                        }
+                        ui.separator();
+                        ui.label(
+                            egui::RichText::new("GraphNet · live HDC REPL")
+                                .size(theme::SIZE_TINY)
+                                .color(theme::TEXT_MUTED),
+                        );
+                        ui.label(
+                            egui::RichText::new(env!("CARGO_PKG_VERSION"))
+                                .size(theme::SIZE_TINY)
+                                .color(theme::TEXT_MUTED)
+                                .monospace(),
+                        );
+                    });
+                    // Account/settings on the right side, matching JetBrains.
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            // Persist-state indicator (mirrors the one in status bar).
+                            let dot = if self.dirty_since.is_some() { "●" } else { "✓" };
+                            let dot_color = if self.dirty_since.is_some() {
+                                theme::ACCENT_PURPLE
+                            } else {
+                                egui::Color32::from_rgb(0x4D, 0xC4, 0x82)
+                            };
+                            ui.label(
+                                egui::RichText::new(dot)
+                                    .color(dot_color)
+                                    .size(theme::SIZE_BODY)
+                                    .strong(),
+                            )
+                            .on_hover_text(if self.dirty_since.is_some() {
+                                "unsaved — auto-persist in <3s"
+                            } else {
+                                "all changes saved"
+                            });
+                        },
+                    );
+                });
+            });
+
         egui::TopBottomPanel::top("hero")
             .frame(egui::Frame::none().fill(theme::BG))
             .resizable(false)
