@@ -4458,6 +4458,77 @@ impl eframe::App for App {
                         }
                     });
                     ui.separator();
+                    // Attention heatmap (#779 demo) — synthetic 12×12 pattern
+                    // when GPT-2-small or transformer-block is selected.
+                    if matches!(
+                        self.arch_inspector_selection,
+                        ArchInspectorChoice::Gpt2Small | ArchInspectorChoice::TransformerBlock
+                    ) {
+                        ui.separator();
+                        ui.label(
+                            egui::RichText::new("Synthetic attention pattern (head 0)")
+                                .size(theme::SIZE_SMALL)
+                                .color(theme::TEXT_MUTED)
+                                .italics(),
+                        );
+                        let n = 12_usize;
+                        let cell = 14.0_f32;
+                        let total_w = n as f32 * cell;
+                        let (rect, _) = ui.allocate_exact_size(
+                            egui::vec2(total_w, n as f32 * cell),
+                            egui::Sense::hover(),
+                        );
+                        let painter = ui.painter_at(rect);
+                        // Causal-mask triangle with decaying off-diagonal.
+                        for q in 0..n {
+                            for k in 0..n {
+                                if k > q {
+                                    // Masked region — render as faint gray.
+                                    painter.rect_filled(
+                                        egui::Rect::from_min_size(
+                                            egui::pos2(
+                                                rect.min.x + k as f32 * cell,
+                                                rect.min.y + q as f32 * cell,
+                                            ),
+                                            egui::vec2(cell - 1.0, cell - 1.0),
+                                        ),
+                                        1.0,
+                                        theme::BG_CARD_HOVER,
+                                    );
+                                } else {
+                                    // Attention weight: decay with |q - k|.
+                                    let dist = (q as f32 - k as f32).abs();
+                                    let w = (-dist * 0.4).exp();
+                                    let blue = (w * 255.0) as u8;
+                                    let c = egui::Color32::from_rgb(
+                                        (0x5B as f32 * w) as u8,
+                                        (0x8D as f32 * w) as u8,
+                                        blue.max(40),
+                                    );
+                                    painter.rect_filled(
+                                        egui::Rect::from_min_size(
+                                            egui::pos2(
+                                                rect.min.x + k as f32 * cell,
+                                                rect.min.y + q as f32 * cell,
+                                            ),
+                                            egui::vec2(cell - 1.0, cell - 1.0),
+                                        ),
+                                        1.0,
+                                        c,
+                                    );
+                                }
+                            }
+                        }
+                        ui.label(
+                            egui::RichText::new(
+                                "rows = query positions · cols = key positions · brighter = higher attention · gray = causally masked",
+                            )
+                            .size(theme::SIZE_TINY)
+                            .color(theme::TEXT_DIM),
+                        );
+                        ui.separator();
+                    }
+
                     // Tiny 2D node-graph rendering — boxes stacked vertically
                     // with arrows for edges. Layer color matches op_color()
                     // when possible.
