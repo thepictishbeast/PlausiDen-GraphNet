@@ -2676,8 +2676,15 @@ impl eframe::App for App {
                                     None
                                 }
                             }
-                            Workspace::Train if self.train.steps > 0 => {
-                                Some(format!("· {}", self.train.steps))
+                            Workspace::Train => {
+                                // Always show train step + target state — even
+                                // at zero, so user knows training is available.
+                                let target_glyph = if self.train.target.is_some() {
+                                    "🎯"
+                                } else {
+                                    "○"
+                                };
+                                Some(format!("· {} {}", target_glyph, self.train.steps))
                             }
                             _ => None,
                         };
