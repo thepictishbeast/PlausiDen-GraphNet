@@ -131,6 +131,66 @@ struct App {
     show_floating_stats: bool,
     /// Show the floating mini-help window? (#741)
     show_floating_minihelp: bool,
+    /// Training pipeline state (#757).
+    train: TrainState,
+    /// Loaded image path (for status display) (#758).
+    loaded_image: Option<std::path::PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+struct TrainState {
+    /// Target hypervector — what we want the stack to produce from `App.input`.
+    target: Option<Hypervector>,
+    /// Loss over time: 1 - cos_sim(actual, target), one entry per training step.
+    loss_history: Vec<f64>,
+    /// Which training mode is selected.
+    mode: TrainMode,
+    /// How many bits to flip per step (perturbation magnitude).
+    perturb_bits: usize,
+    /// Train counter.
+    steps: u64,
+    /// Random seed for perturbations (advanced per step).
+    rng_seed: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrainMode {
+    /// Random-perturb a Dense/HrrBind key; accept if loss improved.
+    HillClimb,
+    /// Same as HillClimb but accepts worse with probability decreasing in delta.
+    SimulatedAnneal,
+    /// Replace a random key entirely each step (lazy baseline).
+    Random,
+}
+
+impl TrainMode {
+    fn all() -> &'static [TrainMode] {
+        &[
+            TrainMode::HillClimb,
+            TrainMode::SimulatedAnneal,
+            TrainMode::Random,
+        ]
+    }
+    fn label(self) -> &'static str {
+        match self {
+            TrainMode::HillClimb => "hill-climb",
+            TrainMode::SimulatedAnneal => "simulated anneal",
+            TrainMode::Random => "random",
+        }
+    }
+}
+
+impl Default for TrainState {
+    fn default() -> Self {
+        Self {
+            target: None,
+            loss_history: Vec::new(),
+            mode: TrainMode::HillClimb,
+            perturb_bits: 50,
+            steps: 0,
+            rng_seed: 1,
+        }
+    }
 }
 
 struct AudioState {
@@ -618,6 +678,8 @@ impl App {
             show_right_panel: true,
             show_floating_stats: false,
             show_floating_minihelp: false,
+            train: TrainState::default(),
+            loaded_image: None,
             slots: [None, None, None, None],
             active_slot: 0,
             audio: None,
@@ -1068,6 +1130,184 @@ impl App {
     fn play_forward_tone(&self, _sim: Option<f64>) {
         // Intentionally silent until libasound2-dev is available on the
         // build host. self.audio_enabled gates the future call site.
+    }
+
+    /// Run one training step against the current target (#757).
+    fn train_step(&mut self) {
+        let Some(target) = self.train.target.clone() else {
+            self.log(
+                LogSeverity::Warn,
+                "no target set — click 'set current output as target' first".to_string(),
+            );
+            return;
+        };
+        if self.stack.len() == 0 {
+            self.log(LogSeverity::Warn, "empty stack — add ops first".to_string());
+            return;
+        }
+        // Find a keyed op to perturb (Dense, HrrBind, Permute).
+        let keyed_indices: Vec<usize> = self
+            .stack
+            .operations()
+            .iter()
+            .enumerate()
+            .filter_map(|(i, op)| {
+                matches!(op.tag(), "dense" | "hrr_bind" | "permute").then_some(i)
+            })
+            .collect();
+        if keyed_indices.is_empty() {
+            self.log(LogSeverity::Warn, "no keyed ops to train".to_string());
+            return;
+        }
+        self.train.rng_seed = self.train.rng_seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let rng = self.train.rng_seed;
+        let idx_pick = keyed_indices[(rng as usize) % keyed_indices.len()];
+        // Compute current loss.
+        let cur_out = match self.stack.forward(&self.input) {
+            Ok(o) => o,
+            Err(_) => return,
+        };
+        let cur_loss = if cur_out.dim() == target.dim() {
+            1.0 - cos_sim(&cur_out, &target).unwrap_or(0.0)
+        } else {
+            return;
+        };
+        // Build candidate op with a perturbation.
+        let candidate_op = match self.train.mode {
+            TrainMode::Random => match self.stack.operations()[idx_pick].tag() {
+                "dense" => Operation::Dense {
+                    key: Hypervector::random_seeded(self.dim, rng),
+                },
+                "hrr_bind" => Operation::HrrBind {
+                    key: Hypervector::random_seeded(self.dim, rng),
+                },
+                "permute" => Operation::Permute {
+                    shift: (rng as usize) % self.dim.max(1),
+                },
+                _ => return,
+            },
+            TrainMode::HillClimb | TrainMode::SimulatedAnneal => {
+                match &self.stack.operations()[idx_pick] {
+                    Operation::Dense { key } => {
+                        let mut new_key: Vec<i8> = key.as_slice().to_vec();
+                        let mut r = rng;
+                        for _ in 0..self.train.perturb_bits {
+                            r = r.wrapping_mul(6364136223846793005).wrapping_add(11);
+                            let i = (r as usize) % new_key.len();
+                            new_key[i] = -new_key[i];
+                        }
+                        Operation::Dense {
+                            key: Hypervector::from_bipolar(new_key)
+                                .unwrap_or_else(|| key.clone()),
+                        }
+                    }
+                    Operation::HrrBind { key } => {
+                        let mut new_key: Vec<i8> = key.as_slice().to_vec();
+                        let mut r = rng;
+                        for _ in 0..self.train.perturb_bits {
+                            r = r.wrapping_mul(6364136223846793005).wrapping_add(11);
+                            let i = (r as usize) % new_key.len();
+                            new_key[i] = -new_key[i];
+                        }
+                        Operation::HrrBind {
+                            key: Hypervector::from_bipolar(new_key)
+                                .unwrap_or_else(|| key.clone()),
+                        }
+                    }
+                    Operation::Permute { shift } => Operation::Permute {
+                        shift: (shift + (rng as usize % 7) + 1) % self.dim.max(1),
+                    },
+                    _ => return,
+                }
+            }
+        };
+        // Try the candidate.
+        let prev_op = self.stack.replace_operation(idx_pick, candidate_op);
+        let new_loss = match self.stack.forward(&self.input) {
+            Ok(o) if o.dim() == target.dim() => {
+                1.0 - cos_sim(&o, &target).unwrap_or(0.0)
+            }
+            _ => {
+                // Revert + bail.
+                self.stack.replace_operation(idx_pick, prev_op);
+                return;
+            }
+        };
+        let accept = match self.train.mode {
+            TrainMode::HillClimb => new_loss < cur_loss,
+            TrainMode::Random => true,
+            TrainMode::SimulatedAnneal => {
+                if new_loss < cur_loss {
+                    true
+                } else {
+                    let delta = new_loss - cur_loss;
+                    let temp = (1.0 / (1.0 + self.train.steps as f64 / 100.0)).max(0.01);
+                    let prob = (-delta / temp).exp();
+                    let r = (rng % 1_000_000) as f64 / 1_000_000.0;
+                    r < prob
+                }
+            }
+        };
+        if !accept {
+            self.stack.replace_operation(idx_pick, prev_op);
+        }
+        self.train.loss_history.push(if accept { new_loss } else { cur_loss });
+        if self.train.loss_history.len() > 2_000 {
+            self.train.loss_history.remove(0);
+        }
+        self.train.steps = self.train.steps.saturating_add(1);
+    }
+
+    /// Load an image file → quantize to bipolar hypervector → set as input.
+    /// (#758 computer vision support.)
+    fn load_image_as_input(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Image", &["png", "jpg", "jpeg", "bmp"])
+            .pick_file()
+        else {
+            self.log(LogSeverity::Warn, "image load cancelled".to_string());
+            return;
+        };
+        let img = match image::open(&path) {
+            Ok(i) => i,
+            Err(e) => {
+                self.log(LogSeverity::Error, format!("image decode failed: {e}"));
+                return;
+            }
+        };
+        // Convert to greyscale 8-bit then bipolar at the current dim.
+        let grey = img.to_luma8();
+        let pixels: Vec<u8> = grey.into_raw();
+        if pixels.is_empty() {
+            self.log(LogSeverity::Error, "empty image".to_string());
+            return;
+        }
+        // Resample pixel array down to self.dim by stride sampling, then
+        // threshold at 128.
+        let data: Vec<i8> = (0..self.dim)
+            .map(|i| {
+                let src = (i as f64) * (pixels.len() as f64) / (self.dim as f64);
+                let p = pixels[src as usize];
+                if p >= 128 {
+                    1i8
+                } else {
+                    -1
+                }
+            })
+            .collect();
+        match Hypervector::from_bipolar(data) {
+            Some(hv) => {
+                self.input = hv;
+                self.loaded_image = Some(path.clone());
+                self.log(
+                    LogSeverity::Success,
+                    format!("image → input: {}", path.display()),
+                );
+            }
+            None => {
+                self.log(LogSeverity::Error, "quantize failed".to_string());
+            }
+        }
     }
 
     /// Compute a human-readable summary of a hypervector (#753).
@@ -2431,6 +2671,125 @@ impl eframe::App for App {
                     }
                     return;
                 }
+                // Train workspace content (#757).
+                if self.workspace == Workspace::Train {
+                    section_heading(ui, "🎓 Training");
+                    ui.add_space(theme::SPACE_SM);
+                    card(ui, |ui| {
+                        // Mode picker.
+                        ui.label(
+                            egui::RichText::new("mode")
+                                .color(theme::TEXT_MUTED)
+                                .size(theme::SIZE_SMALL),
+                        );
+                        ui.horizontal_wrapped(|ui| {
+                            for &m in TrainMode::all() {
+                                let active = self.train.mode == m;
+                                let resp = ui.add(
+                                    egui::Button::new(
+                                        egui::RichText::new(m.label())
+                                            .size(theme::SIZE_SMALL)
+                                            .color(if active {
+                                                egui::Color32::WHITE
+                                            } else {
+                                                theme::TEXT_PRIMARY
+                                            })
+                                            .strong(),
+                                    )
+                                    .fill(if active {
+                                        theme::ACCENT_MID
+                                    } else {
+                                        theme::BG_CARD_HOVER
+                                    })
+                                    .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
+                                    .rounding(egui::Rounding::same(theme::RADIUS_SM)),
+                                );
+                                if resp.clicked() {
+                                    self.train.mode = m;
+                                    self.set_status(format!("training mode → {}", m.label()));
+                                }
+                            }
+                        });
+                        ui.add_space(theme::SPACE_SM);
+                        // Target setup.
+                        ui.horizontal(|ui| {
+                            if mini_button(ui, "🎯 set output as target", theme::ACCENT_BLUE)
+                                .on_hover_text("freeze the current output as the target the stack should learn to produce")
+                                .clicked()
+                            {
+                                if let Some(out) = &self.last_output {
+                                    self.train.target = Some(out.clone());
+                                    self.train.loss_history.clear();
+                                    self.train.steps = 0;
+                                    self.set_status("target set to current output".to_string());
+                                } else {
+                                    self.log(
+                                        LogSeverity::Warn,
+                                        "no output yet — run a forward first".to_string(),
+                                    );
+                                }
+                            }
+                            if mini_button(ui, "✕ clear target", theme::TEXT_MUTED).clicked() {
+                                self.train.target = None;
+                                self.train.loss_history.clear();
+                                self.train.steps = 0;
+                            }
+                        });
+                        ui.add_space(theme::SPACE_SM);
+                        // Perturb bits slider.
+                        ui.label(
+                            egui::RichText::new("bits to flip per step")
+                                .color(theme::TEXT_MUTED)
+                                .size(theme::SIZE_SMALL),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut self.train.perturb_bits, 1..=500)
+                                .logarithmic(true)
+                                .text("bits"),
+                        );
+                    });
+
+                    ui.add_space(theme::SPACE_MD);
+                    // Step controls.
+                    ui.horizontal(|ui| {
+                        if mini_button(ui, "⏵ step", theme::ACCENT_MID).clicked() {
+                            self.train_step();
+                        }
+                        if mini_button(ui, "⏩ 10 steps", theme::ACCENT_BLUE).clicked() {
+                            for _ in 0..10 {
+                                self.train_step();
+                            }
+                        }
+                        if mini_button(ui, "⏭ 100 steps", theme::ACCENT_PURPLE).clicked() {
+                            for _ in 0..100 {
+                                self.train_step();
+                            }
+                        }
+                    });
+
+                    if !self.train.loss_history.is_empty() {
+                        ui.add_space(theme::SPACE_MD);
+                        section_heading(ui, "📉 loss curve");
+                        ui.add_space(theme::SPACE_SM);
+                        card(ui, |ui| {
+                            metric(ui, "steps", &self.train.steps.to_string());
+                            if let Some(last) = self.train.loss_history.last() {
+                                metric(ui, "current loss", &format!("{last:.4}"));
+                            }
+                            if let Some(first) = self.train.loss_history.first() {
+                                metric(ui, "initial loss", &format!("{first:.4}"));
+                            }
+                            ui.add_space(theme::SPACE_SM);
+                            loss_sparkline(
+                                ui,
+                                self.train.loss_history.iter().copied(),
+                                100.0,
+                            );
+                        });
+                    }
+                    return;
+                }
+
                 if self.tool_mode == ToolMode::Inspect {
                     section_heading(ui, "Inspect");
                     ui.add_space(theme::SPACE_SM);
@@ -3700,6 +4059,7 @@ impl eframe::App for App {
                 let has_output = self.last_output.is_some();
                 let mut zoom_request_local: Option<ZoomTarget> = None;
                 let mut regen_clicked = false;
+                let mut load_image_clicked = false;
                 ui.columns(if has_output { 2 } else { 1 }, |cols| {
                     // Left col: input.
                     let left = &mut cols[0];
@@ -3718,7 +4078,28 @@ impl eframe::App for App {
                             {
                                 regen_clicked = true;
                             }
+                            if mini_button(ui, "🖼 image…", theme::ACCENT_BLUE)
+                                .on_hover_text(
+                                    "load PNG/JPG/BMP → quantize to bipolar input (#758)",
+                                )
+                                .clicked()
+                            {
+                                load_image_clicked = true;
+                            }
+                            let _ = &mut load_image_clicked;
                         });
+                        if let Some(p) = &self.loaded_image {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "📷 {}",
+                                    p.file_name()
+                                        .and_then(|n| n.to_str())
+                                        .unwrap_or("?")
+                                ))
+                                .size(theme::SIZE_TINY)
+                                .color(theme::ACCENT_PURPLE),
+                            );
+                        }
                         ui.label(
                             egui::RichText::new(format!(
                                 "fp {} · {:.1}% +1",
@@ -3832,6 +4213,9 @@ impl eframe::App for App {
                 }
                 if regen_clicked {
                     self.regenerate_input();
+                }
+                if load_image_clicked {
+                    self.load_image_as_input();
                 }
 
                 ui.add_space(theme::SPACE_LG);
@@ -5531,6 +5915,52 @@ fn architecture_graph(
     }
 
     clicked_idx
+}
+
+/// Plot training loss curve. Loss in [0, 2] approximately; auto-scale.
+fn loss_sparkline(ui: &mut egui::Ui, values: impl Iterator<Item = f64>, height: f32) {
+    let vs: Vec<f64> = values.collect();
+    let width = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+
+    if vs.is_empty() {
+        return;
+    }
+    let max_v = vs.iter().copied().fold(0.0_f64, f64::max).max(0.1);
+    let min_v = vs.iter().copied().fold(f64::INFINITY, f64::min).min(0.0);
+    let range = (max_v - min_v).max(0.01);
+    let step = if vs.len() > 1 {
+        rect.width() / (vs.len() - 1) as f32
+    } else {
+        rect.width()
+    };
+    let to_y = |v: f64| -> f32 {
+        let t = ((v - min_v) / range) as f32;
+        rect.max.y - t * rect.height()
+    };
+    let mut prev = egui::pos2(rect.min.x, to_y(vs[0]));
+    for (i, v) in vs.iter().enumerate().skip(1) {
+        let p = egui::pos2(rect.min.x + step * i as f32, to_y(*v));
+        painter.line_segment([prev, p], egui::Stroke::new(1.5, theme::ACCENT_BLUE));
+        prev = p;
+    }
+    // Mark min reached.
+    let min_y = to_y(min_v);
+    painter.line_segment(
+        [
+            egui::pos2(rect.min.x, min_y),
+            egui::pos2(rect.max.x, min_y),
+        ],
+        egui::Stroke::new(0.5, theme::ACCENT_PURPLE),
+    );
+    painter.text(
+        egui::pos2(rect.max.x - 4.0, rect.min.y + 8.0),
+        egui::Align2::RIGHT_TOP,
+        format!("min {min_v:.3} · max {max_v:.3}"),
+        egui::FontId::proportional(theme::SIZE_TINY),
+        theme::TEXT_MUTED,
+    );
 }
 
 /// Plot recent latency values (positive ms). Auto-scales y-axis.
