@@ -134,6 +134,8 @@ struct App {
     show_glossary: bool,
     /// Glossary search query.
     glossary_query: String,
+    /// Show the REPL command reference window? (Help → REPL reference)
+    show_repl_help: bool,
     /// User-tweakable W parameter for the symbolic-formula preview (#780).
     sym_w: f32,
     /// User-tweakable b parameter for the symbolic-formula preview.
@@ -780,6 +782,7 @@ impl App {
             zoom_modal_scale: 1.0,
             show_glossary: false,
             glossary_query: String::new(),
+            show_repl_help: false,
             sym_w: 1.0,
             sym_b: 0.0,
             sym_animate: true,
@@ -3133,6 +3136,10 @@ impl eframe::App for App {
                             self.show_glossary = true;
                             ui.close_menu();
                         }
+                        if ui.button("⌨ REPL reference…").clicked() {
+                            self.show_repl_help = true;
+                            ui.close_menu();
+                        }
                         if ui.button("🎬 Demo").clicked() {
                             if self.demo.is_none() {
                                 self.start_demo();
@@ -4834,6 +4841,136 @@ impl eframe::App for App {
                     }); // close ScrollArea::vertical
             });
         } // show_left_panel
+
+        // REPL reference window (iter 166).
+        if self.show_repl_help {
+            let mut open = self.show_repl_help;
+            egui::Window::new("⌨ GraphNet REPL — command reference")
+                .open(&mut open)
+                .resizable(true)
+                .default_size([580.0, 520.0])
+                .frame(
+                    egui::Frame::none()
+                        .fill(egui::Color32::from_rgb(0x0A, 0x0D, 0x14))
+                        .stroke(egui::Stroke::new(1.0, theme::ACCENT_BLUE))
+                        .rounding(egui::Rounding::same(theme::RADIUS_MD))
+                        .inner_margin(egui::Margin::same(theme::SPACE_MD)),
+                )
+                .show(ctx, |ui| {
+                    egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
+                        let mono =
+                            |s: &str, c: egui::Color32, size: f32| -> egui::RichText {
+                                egui::RichText::new(s.to_string()).monospace().color(c).size(size)
+                            };
+                        let header =
+                            |ui: &mut egui::Ui, text: &str| {
+                                ui.add_space(theme::SPACE_SM);
+                                ui.label(
+                                    egui::RichText::new(text)
+                                        .size(theme::SIZE_BODY)
+                                        .color(theme::ACCENT_PURPLE)
+                                        .strong(),
+                                );
+                            };
+                        let cmd_row = |ui: &mut egui::Ui, cmd: &str, desc: &str| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(format!("{cmd:<22}"))
+                                        .size(theme::SIZE_SMALL)
+                                        .color(theme::ACCENT_BLUE)
+                                        .monospace(),
+                                );
+                                ui.label(
+                                    egui::RichText::new(desc)
+                                        .size(theme::SIZE_SMALL)
+                                        .color(theme::TEXT_PRIMARY),
+                                );
+                            });
+                        };
+                        ui.label(
+                            mono(
+                                "Open the console with ` (backtick) or the ⌨ Console hero button.",
+                                theme::TEXT_MUTED,
+                                theme::SIZE_SMALL,
+                            ),
+                        );
+                        header(ui, "Editing");
+                        cmd_row(ui, "Enter", "submit current line");
+                        cmd_row(ui, "↑ / ↓", "recall previous / next command");
+                        cmd_row(ui, "Tab", "complete command from prefix");
+                        cmd_row(ui, "Esc", "close console");
+
+                        header(ui, "Help + introspection");
+                        cmd_row(ui, "help", "list every command");
+                        cmd_row(ui, "stat", "print stack summary");
+                        cmd_row(ui, "clear", "wipe console history");
+
+                        header(ui, "Forward execution");
+                        cmd_row(ui, "fwd / forward", "run one forward pass");
+                        cmd_row(ui, "live", "toggle live mode (60fps)");
+
+                        header(ui, "Stack mutation");
+                        cmd_row(ui, "add identity", "append identity op");
+                        cmd_row(ui, "add dense", "append dense op (random key)");
+                        cmd_row(ui, "add hrr_bind", "append HRR binding op");
+                        cmd_row(ui, "add permute", "append cyclic-shift op");
+                        cmd_row(ui, "add negate", "append negate op");
+                        cmd_row(ui, "rm N", "remove op at index N");
+                        cmd_row(ui, "reseed N", "regenerate key for op N");
+
+                        header(ui, "Templates + state");
+                        cmd_row(ui, "template NAME", "load named template");
+                        cmd_row(ui, "regen", "regenerate input (new seed)");
+                        cmd_row(ui, "reset", "clear stack to 0 ops");
+                        cmd_row(ui, "dim N", "change dim — RESETS stack");
+                        cmd_row(ui, "undo", "undo last mutation");
+                        cmd_row(ui, "redo", "redo undone mutation");
+
+                        header(ui, "I/O");
+                        cmd_row(ui, "save", "save YAML (native dialog)");
+                        cmd_row(ui, "load", "load YAML (native dialog)");
+                        cmd_row(ui, "png", "export 3D viewport as PNG");
+
+                        header(ui, "Output color code");
+                        cmd_row(ui, "› cyan", "prompt marker");
+                        cmd_row(ui, "green", "success: loaded/saved/ran/added");
+                        cmd_row(ui, "red", "error/invalid/failed");
+                        cmd_row(ui, "gray", "informational");
+
+                        header(ui, "Worked example");
+                        for line in [
+                            "› template standard",
+                            "› stat",
+                            "› fwd                     # cos_sim ≈ 0.58",
+                            "› add dense",
+                            "› fwd                     # cos_sim drops",
+                            "› reseed 3",
+                            "› live                    # continuous 60fps",
+                            "› save",
+                        ] {
+                            ui.label(mono(line, theme::TEXT_PRIMARY, theme::SIZE_SMALL));
+                        }
+
+                        header(ui, "Watch log live");
+                        ui.label(mono(
+                            "tail -f ~/.config/graphnet/graphnet.log",
+                            theme::ACCENT_BLUE,
+                            theme::SIZE_SMALL,
+                        ));
+
+                        ui.add_space(theme::SPACE_MD);
+                        ui.label(
+                            egui::RichText::new(
+                                "Full reference: docs/REPL.md. See also docs/GLOSSARY.md \
+                                 + docs/PROOFS.md.",
+                            )
+                            .size(theme::SIZE_TINY)
+                            .color(theme::TEXT_DIM),
+                        );
+                    });
+                });
+            self.show_repl_help = open;
+        }
 
         // Glossary window — searchable AI / HDC term reference (iter 165).
         if self.show_glossary {
