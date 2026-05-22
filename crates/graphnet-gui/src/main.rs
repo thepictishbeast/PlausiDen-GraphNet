@@ -155,6 +155,9 @@ struct App {
     train: TrainState,
     /// Loaded image path (for status display) (#758).
     loaded_image: Option<std::path::PathBuf>,
+    /// Loaded .safetensors file metadata (#777). Stores (path, tensor_count,
+    /// total_bytes, list of (name, dtype, shape)).
+    loaded_safetensors: Option<SafetensorsInfo>,
     /// When was the most recent 3D op-node click? Used to flash the node.
     last_node_click_at: Option<std::time::Instant>,
     /// Which op was last clicked in the 3D graph (for the flash).
@@ -221,6 +224,16 @@ struct AudioState {
     /// Stub for now — real rodio output requires libasound2-dev on Linux.
     /// When available, hold OutputStream + OutputStreamHandle here.
     _placeholder: (),
+}
+
+/// Summary of a loaded .safetensors file.
+#[derive(Debug, Clone)]
+struct SafetensorsInfo {
+    path: std::path::PathBuf,
+    tensor_count: usize,
+    total_bytes: u64,
+    /// (name, dtype_str, shape) per tensor.
+    tensors: Vec<(String, String, Vec<usize>)>,
 }
 
 /// Factory choices for the architecture inspector (#773 Phase 1.5).
@@ -754,6 +767,7 @@ impl App {
             arch_inspector_selection: ArchInspectorChoice::Gpt2Small,
             train: TrainState::default(),
             loaded_image: None,
+            loaded_safetensors: None,
             last_node_click_at: None,
             last_node_clicked: None,
             slots: [None, None, None, None],
@@ -1454,6 +1468,58 @@ impl App {
                 ),
             );
         }
+    }
+
+    /// Load a .safetensors model weight file → parse metadata only
+    /// (no inference). (#777 — first step toward candle absorption.)
+    fn load_safetensors(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Safetensors", &["safetensors"])
+            .pick_file()
+        else {
+            self.log(LogSeverity::Warn, ".safetensors load cancelled".to_string());
+            return;
+        };
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(e) => {
+                self.log(LogSeverity::Error, format!("safetensors read failed: {e}"));
+                return;
+            }
+        };
+        let parsed = match safetensors::SafeTensors::deserialize(&bytes) {
+            Ok(p) => p,
+            Err(e) => {
+                self.log(LogSeverity::Error, format!("safetensors decode failed: {e}"));
+                return;
+            }
+        };
+        let names: Vec<String> = parsed.names().iter().map(|s| s.to_string()).collect();
+        let tensors: Vec<(String, String, Vec<usize>)> = names
+            .iter()
+            .map(|n| {
+                let view = parsed.tensor(n).expect("tensor name from names()");
+                let dtype = format!("{:?}", view.dtype());
+                let shape = view.shape().to_vec();
+                (n.clone(), dtype, shape)
+            })
+            .collect();
+        let total_bytes = bytes.len() as u64;
+        self.loaded_safetensors = Some(SafetensorsInfo {
+            path: path.clone(),
+            tensor_count: tensors.len(),
+            total_bytes,
+            tensors,
+        });
+        self.log(
+            LogSeverity::Success,
+            format!(
+                "📦 loaded safetensors: {} ({} tensors, {} bytes)",
+                path.display(),
+                self.loaded_safetensors.as_ref().expect("just set").tensor_count,
+                total_bytes
+            ),
+        );
     }
 
     /// Load an image file → quantize to bipolar hypervector → set as input.
@@ -2433,6 +2499,10 @@ impl eframe::App for App {
                         ui.separator();
                         if ui.button("📂 Open YAML…  Ctrl+O").clicked() {
                             self.load_yaml();
+                            ui.close_menu();
+                        }
+                        if ui.button("📦 Open .safetensors…").clicked() {
+                            self.load_safetensors();
                             ui.close_menu();
                         }
                         if ui.button("💾 Save YAML…  Ctrl+S").clicked() {
