@@ -339,6 +339,9 @@ struct DemoState {
     started_at: std::time::Instant,
     /// Seconds per template.
     pace_sec: f64,
+    paused: bool,
+    /// Time-offset paused at, for resuming with correct elapsed.
+    paused_offset: f64,
 }
 
 const WALKTHROUGH_STEPS: &[(&str, &str)] = &[
@@ -618,11 +621,40 @@ impl App {
             template_idx: 0,
             started_at: std::time::Instant::now(),
             pace_sec: self.demo_pace_sec,
+            paused: false,
+            paused_offset: 0.0,
         });
         self.set_status(format!(
             "Demo started — cycling templates ({:.1}s each)",
             self.demo_pace_sec
         ));
+    }
+
+    fn demo_pause_toggle(&mut self) {
+        if let Some(d) = self.demo.as_mut() {
+            if d.paused {
+                d.paused = false;
+                d.started_at = std::time::Instant::now()
+                    - std::time::Duration::from_secs_f64(d.paused_offset);
+                self.set_status("demo resumed".to_string());
+            } else {
+                d.paused = true;
+                d.paused_offset = d.started_at.elapsed().as_secs_f64();
+                self.set_status("demo paused".to_string());
+            }
+        }
+    }
+
+    fn demo_skip(&mut self, delta: i32) {
+        if let Some(d) = self.demo.as_mut() {
+            let n = TEMPLATES.len() as i32;
+            let new_idx =
+                ((d.template_idx as i32 + delta).clamp(0, n - 1)) as usize;
+            d.template_idx = new_idx;
+            d.started_at = std::time::Instant::now()
+                - std::time::Duration::from_secs_f64(new_idx as f64 * d.pace_sec);
+            d.paused_offset = new_idx as f64 * d.pace_sec;
+        }
     }
 
     fn stop_demo(&mut self) {
@@ -634,6 +666,9 @@ impl App {
         let Some(demo) = self.demo.clone() else {
             return;
         };
+        if demo.paused {
+            return;
+        }
         let elapsed = demo.started_at.elapsed().as_secs_f64();
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let target_idx = (elapsed / demo.pace_sec) as usize;
@@ -1647,6 +1682,33 @@ impl eframe::App for App {
                                 self.stop_demo();
                             } else {
                                 self.start_demo();
+                            }
+                        }
+                        if demo_active {
+                            // Demo transport controls: ⏮ ⏯ ⏭ + progress.
+                            if hero_btn(ui, " ⏮ ", false).clicked() {
+                                self.demo_skip(-1);
+                            }
+                            let paused = self.demo.as_ref().is_some_and(|d| d.paused);
+                            let pp_lbl = if paused { " ▶ " } else { " ⏸ " };
+                            if hero_btn(ui, pp_lbl, false).clicked() {
+                                self.demo_pause_toggle();
+                            }
+                            if hero_btn(ui, " ⏭ ", false).clicked() {
+                                self.demo_skip(1);
+                            }
+                            // Progress text.
+                            if let Some(d) = &self.demo {
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "{}/{}",
+                                        d.template_idx + 1,
+                                        TEMPLATES.len()
+                                    ))
+                                    .size(theme::SIZE_TINY)
+                                    .color(theme::TEXT_MUTED)
+                                    .monospace(),
+                                );
                             }
                         }
                         ui.add_space(theme::SPACE_XS);
