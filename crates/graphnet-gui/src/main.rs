@@ -2062,6 +2062,38 @@ impl eframe::App for App {
                     // Workspace tabs (#743).
                     for ws in Workspace::all() {
                         let active = self.workspace == *ws;
+                        // Pulse the Live tab when live mode is actually running.
+                        let pulse = if *ws == Workspace::Live && self.live {
+                            let t = (std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs_f32())
+                                .unwrap_or(0.0)
+                                * 3.0)
+                                .sin()
+                                * 0.5
+                                + 0.5;
+                            Some(t)
+                        } else {
+                            None
+                        };
+                        let fill = if active {
+                            if let Some(p) = pulse {
+                                // Pulse between ACCENT_MID and a lighter shade.
+                                let base = theme::ACCENT_MID;
+                                egui::Color32::from_rgb(
+                                    ((base.r() as f32 + 40.0 * p).min(255.0)) as u8,
+                                    ((base.g() as f32 + 20.0 * p).min(255.0)) as u8,
+                                    ((base.b() as f32 + 40.0 * p).min(255.0)) as u8,
+                                )
+                            } else {
+                                theme::ACCENT_MID
+                            }
+                        } else if let Some(_p) = pulse {
+                            // Non-active Live tab — subtle red-tinted bg to draw eye.
+                            egui::Color32::from_rgb(0x2A, 0x18, 0x22)
+                        } else {
+                            egui::Color32::from_rgb(0x15, 0x1A, 0x26)
+                        };
                         let resp = ui.add(
                             egui::Button::new(
                                 egui::RichText::new(ws.label())
@@ -2073,11 +2105,7 @@ impl eframe::App for App {
                                     })
                                     .strong(),
                             )
-                            .fill(if active {
-                                theme::ACCENT_MID
-                            } else {
-                                egui::Color32::from_rgb(0x15, 0x1A, 0x26)
-                            })
+                            .fill(fill)
                             .stroke(if active {
                                 egui::Stroke::new(1.0, theme::ACCENT_MID)
                             } else {
@@ -2086,6 +2114,9 @@ impl eframe::App for App {
                             .rounding(egui::Rounding::same(theme::RADIUS_SM))
                             .min_size(egui::vec2(0.0, 28.0)),
                         );
+                        if pulse.is_some() {
+                            ctx.request_repaint();
+                        }
                         if resp.clicked() {
                             self.workspace = *ws;
                             self.set_status(format!("workspace → {}", ws.label()));
