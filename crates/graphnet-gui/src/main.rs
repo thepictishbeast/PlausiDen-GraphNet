@@ -5236,6 +5236,34 @@ impl eframe::App for App {
                                     .color(theme::ACCENT_PURPLE)
                                     .monospace(),
                             );
+                            // Extra metrics moved here from the deleted
+                            // duplicate Output section below the 3D viewport.
+                            if let Some(ms) = self.last_latency_ms {
+                                ui.label(
+                                    egui::RichText::new(format!("latency {ms:.3} ms"))
+                                        .size(theme::SIZE_TINY)
+                                        .color(theme::TEXT_MUTED),
+                                );
+                            }
+                            let bits_diff = self
+                                .input
+                                .as_slice()
+                                .iter()
+                                .zip(out.as_slice())
+                                .filter(|(a, b)| a != b)
+                                .count();
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{bits_diff} / {} bits differ vs input",
+                                    out.dim()
+                                ))
+                                .size(theme::SIZE_TINY)
+                                .color(theme::TEXT_MUTED),
+                            );
+                            if let Some(s) = self.last_cos_sim {
+                                ui.add_space(theme::SPACE_XS);
+                                cosine_similarity_bar(ui, s);
+                            }
                             ui.add_space(theme::SPACE_SM);
                             if hypervector_heatmap_clickable_cmap(ui, &out, 100, 2.0, self.colormap) {
                                 zoom_request_local = Some(ZoomTarget::Output);
@@ -5633,53 +5661,16 @@ impl eframe::App for App {
                     }
                 }
 
-                // (cos_sim / latency sparklines moved to the right panel.)
+                // (Duplicate Output card below 3D viewport REMOVED in iter 119
+                // — owner: "there is another output below the 3d window".
+                // Metrics merged into the first Output card above for a
+                // single source of truth.)
 
                 ui.add_space(theme::SPACE_LG);
                 let mut zoom_request: Option<ZoomTarget> = None;
-                if let Some(out) = self.last_output.clone() {
-                    section_heading(ui, "Output");
-                    ui.add_space(theme::SPACE_SM);
-                    let latency = self.last_latency_ms;
-                    let sim = self.last_cos_sim;
-                    let hd = hamming(&self.input, &out).ok();
-                    let bits_diff = self
-                        .input
-                        .as_slice()
-                        .iter()
-                        .zip(out.as_slice())
-                        .filter(|(a, b)| a != b)
-                        .count();
-                    let mean_mag: f64 = {
-                        #[allow(clippy::cast_precision_loss)]
-                        let n = out.dim() as f64;
-                        out.as_slice().iter().map(|x| f64::from(*x).abs()).sum::<f64>() / n
-                    };
-                    card(ui, |ui| {
-                        metric(ui, "dim", &out.dim().to_string());
-                        if let Some(ms) = latency {
-                            metric(ui, "latency", &format!("{ms:.3} ms"));
-                        }
-                        metric(
-                            ui,
-                            "bits differ vs input",
-                            &format!("{bits_diff} / {}", out.dim()),
-                        );
-                        if let Some(h) = hd {
-                            metric(ui, "hamming distance", &format!("{h:.4}"));
-                        }
-                        metric(ui, "mean |value|", &format!("{mean_mag:.4}"));
-                        if let Some(s) = sim {
-                            ui.add_space(theme::SPACE_SM);
-                            cosine_similarity_bar(ui, s);
-                        }
-                        ui.add_space(theme::SPACE_SM);
-                        if hypervector_heatmap_clickable_cmap(ui, &out, 100, 2.0, self.colormap) {
-                            zoom_request = Some(ZoomTarget::Output);
-                        }
-                    });
-
-                    // (Per-op contribution + inspector moved to the right panel.)
+                let _ = &mut zoom_request; // keep var live for later uses
+                if self.last_output.is_some() {
+                    // No-op: handled by the top Output card now.
                 } else {
                     // Helpful empty-output card: differentiate "no run yet"
                     // from "no ops to run".
