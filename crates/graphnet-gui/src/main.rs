@@ -2659,6 +2659,41 @@ impl eframe::App for App {
                 });
         }
 
+        // Hotkey cheat pill — single line right above the status bar.
+        // Always visible so the keyboard shortcuts are discoverable.
+        egui::TopBottomPanel::bottom("hotkey_strip").show(ctx, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                let pill = |ui: &mut egui::Ui, k: &str, label: &str, c: egui::Color32| {
+                    ui.label(
+                        egui::RichText::new(k)
+                            .size(theme::SIZE_TINY)
+                            .background_color(c.gamma_multiply(0.18))
+                            .color(c)
+                            .monospace()
+                            .strong(),
+                    );
+                    ui.label(
+                        egui::RichText::new(label)
+                            .size(theme::SIZE_TINY)
+                            .color(theme::TEXT_MUTED),
+                    );
+                    ui.add_space(theme::SPACE_XS);
+                };
+                pill(ui, " SPACE ", "forward", theme::ACCENT_BLUE);
+                pill(ui, " R ", "regen", theme::TEXT_MUTED);
+                pill(ui, " L ", "live", theme::ACCENT_PURPLE);
+                pill(ui, " A/D/F/P/N ", "add op", theme::ACCENT_MID);
+                pill(ui, " 1-0 ", "template", theme::ACCENT_BLUE);
+                pill(ui, " ⌘N ", "new", theme::ACCENT_PURPLE);
+                pill(ui, " ⌘S/⌘O ", "save/load", theme::ACCENT_BLUE);
+                pill(ui, " ⌘Z ", "undo", theme::TEXT_MUTED);
+                pill(ui, " H ", "help", theme::ACCENT_MID);
+                pill(ui, " ` ", "console", theme::ACCENT_PURPLE);
+                pill(ui, " Tab ", "panel", theme::TEXT_MUTED);
+                pill(ui, " Esc ", "close", theme::TEXT_MUTED);
+            });
+        });
+
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let flops = flop_estimate(self.dim, self.stack.len());
