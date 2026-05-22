@@ -115,6 +115,10 @@ struct App {
     zoom_modal_scale: f32,
     /// A/B compare: snapshot of a stack to compare against current (#711).
     snapshot_stack: Option<Stack>,
+    /// 4 stack slots A/B/C/D for multi-stack comparison (#722). None = empty slot.
+    slots: [Option<Stack>; 4],
+    /// Which slot is currently active for editing (matches App.stack).
+    active_slot: usize,
     /// Show the left arch panel? (User can collapse it via [Tab].)
     show_left_panel: bool,
     /// Show the right action/contrib panel?
@@ -598,6 +602,8 @@ impl App {
             snapshot_stack: None,
             show_left_panel: true,
             show_right_panel: true,
+            slots: [None, None, None, None],
+            active_slot: 0,
         };
         app.load_template("standard");
         // Try to restore previous session.
@@ -2080,6 +2086,118 @@ impl eframe::App for App {
                     return;
                 }
                 if self.tool_mode == ToolMode::Compare {
+                    // Multi-stack slots A/B/C/D (#722).
+                    section_heading(ui, "Slots (A/B/C/D)");
+                    ui.add_space(theme::SPACE_SM);
+                    card(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new(
+                                "Save the current stack into one of 4 slots. Recall a slot \
+                                 to make it the active stack.",
+                            )
+                            .size(theme::SIZE_SMALL)
+                            .color(theme::TEXT_PRIMARY),
+                        );
+                        ui.add_space(theme::SPACE_SM);
+                        let mut to_save: Option<usize> = None;
+                        let mut to_recall: Option<usize> = None;
+                        let mut to_clear: Option<usize> = None;
+                        let slots_snapshot: Vec<Option<(usize, usize)>> = self
+                            .slots
+                            .iter()
+                            .map(|s| s.as_ref().map(|st| (st.len(), st.dim())))
+                            .collect();
+                        let active = self.active_slot;
+                        for (i, slot_info) in slots_snapshot.iter().enumerate() {
+                            let slot: &Option<(usize, usize)> = slot_info;
+                            let letter = (b'A' + i as u8) as char;
+                            let is_active = active == i;
+                            let mut active_clicked = false;
+                            ui.horizontal(|ui| {
+                                let label = if is_active {
+                                    format!("● {letter}")
+                                } else {
+                                    format!("○ {letter}")
+                                };
+                                let resp = ui.add(
+                                    egui::Button::new(
+                                        egui::RichText::new(label)
+                                            .size(theme::SIZE_SMALL)
+                                            .color(if is_active {
+                                                egui::Color32::WHITE
+                                            } else {
+                                                theme::TEXT_PRIMARY
+                                            })
+                                            .strong(),
+                                    )
+                                    .fill(if is_active {
+                                        theme::ACCENT_MID
+                                    } else {
+                                        theme::BG_CARD_HOVER
+                                    })
+                                    .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
+                                    .rounding(egui::Rounding::same(theme::RADIUS_SM))
+                                    .min_size(egui::vec2(32.0, 26.0)),
+                                );
+                                if resp.clicked() {
+                                    active_clicked = true;
+                                }
+                                if mini_button(ui, "save", theme::ACCENT_BLUE).clicked() {
+                                    to_save = Some(i);
+                                }
+                                let has = slot.is_some();
+                                ui.add_enabled_ui(has, |ui| {
+                                    if mini_button(ui, "recall", theme::ACCENT_PURPLE).clicked() {
+                                        to_recall = Some(i);
+                                    }
+                                    if mini_button(ui, "✕", theme::TEXT_MUTED).clicked() {
+                                        to_clear = Some(i);
+                                    }
+                                });
+                                if let Some((ops, dim)) = slot {
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "({ops} ops · D={dim})"
+                                        ))
+                                        .size(theme::SIZE_TINY)
+                                        .color(theme::TEXT_MUTED),
+                                    );
+                                }
+                            });
+                            if active_clicked {
+                                to_recall = Some(i);
+                            }
+                        }
+                        if let Some(i) = to_save {
+                            self.slots[i] = Some(self.stack.clone());
+                            self.set_status(format!(
+                                "saved current stack to slot {}",
+                                (b'A' + i as u8) as char
+                            ));
+                        }
+                        if let Some(i) = to_recall {
+                            if let Some(s) = self.slots[i].clone() {
+                                self.push_undo();
+                                self.dim = s.dim();
+                                self.stack = s;
+                                self.dim_slider = self.dim;
+                                self.active_slot = i;
+                                self.set_status(format!(
+                                    "recalled slot {} as active stack",
+                                    (b'A' + i as u8) as char
+                                ));
+                            }
+                        }
+                        if let Some(i) = to_clear {
+                            self.slots[i] = None;
+                            self.set_status(format!(
+                                "cleared slot {}",
+                                (b'A' + i as u8) as char
+                            ));
+                        }
+                    });
+
+                    ui.add_space(theme::SPACE_MD);
                     section_heading(ui, "A/B compare");
                     ui.add_space(theme::SPACE_SM);
                     card(ui, |ui| {
