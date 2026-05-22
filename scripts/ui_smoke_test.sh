@@ -102,6 +102,20 @@ step "14_left_closed"
 xdotool key --window "$WIN" Tab
 step "15_left_open"
 
+# 11. Cmd+N opens templates popup.
+xdotool key --window "$WIN" ctrl+n
+step "16_templates_popup"
+xdotool key --window "$WIN" Escape
+step "17_templates_closed"
+
+# 12. Cmd+1 saves to slot A.
+xdotool key --window "$WIN" ctrl+1
+step "18_slot_a_save"
+
+# 13. F key resets 3D viewport rotation.
+xdotool key --window "$WIN" f
+step "19_f_reset"
+
 echo "[ui-smoke] done — $(ls "$OUT" | wc -l) screenshots in $OUT"
 kill "$GUI_PID" 2>/dev/null
 wait "$GUI_PID" 2>/dev/null
