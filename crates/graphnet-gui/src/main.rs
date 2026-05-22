@@ -1121,6 +1121,17 @@ impl App {
             if click_flash.is_some() {
                 ctx.request_repaint();
             }
+            let entry_scale = self.recent_change.and_then(|(idx, t)| {
+                let age = t.elapsed().as_secs_f32();
+                if age < 0.6 {
+                    Some((idx, age / 0.6))
+                } else {
+                    None
+                }
+            });
+            if entry_scale.is_some() {
+                ctx.request_repaint();
+            }
             let (clicked, new_yaw, new_pitch, new_roll, action) = architecture_graph_3d(
                 ui,
                 &op_tags,
@@ -1133,6 +1144,7 @@ impl App {
                 particle_phase,
                 contrib_slice,
                 click_flash,
+                entry_scale,
             );
             if let Some(click) = clicked {
                 graph_click = Some(click);
@@ -7515,6 +7527,8 @@ fn architecture_graph_3d(
     particle_phase: Option<f32>,
     contributions: Option<&[f64]>,
     click_flash: Option<(usize, f32)>,
+    // (op_idx, scale_factor 0..1) — newly-added ops grow from 0.5x to 1.0x.
+    entry_scale: Option<(usize, f32)>,
 ) -> (Option<ArchClick>, f32, f32, f32, Option<ArchToolAction>) {
     let n_ops = op_tags.len();
     // Iter 126 (#785): 3D viewport is THE focus per owner direction.
@@ -7755,7 +7769,12 @@ fn architecture_graph_3d(
             Node::Op(i, tag) => {
                 let colour = theme::op_color(tag);
                 let is_selected = selected == Some(*i);
-                let r = 28.0 * size_mul;
+                // Entry animation: newly-added ops scale up from 0.5x to 1.0x.
+                let entry_mult = entry_scale
+                    .filter(|(idx, _)| *idx == *i)
+                    .map(|(_, s)| 0.5 + s * 0.5)
+                    .unwrap_or(1.0);
+                let r = 28.0 * size_mul * entry_mult;
                 if is_selected {
                     // Selected: solid colour with subtle outer glow.
                     painter.circle_filled(*pos, r + 4.0, colour.gamma_multiply(0.25));
