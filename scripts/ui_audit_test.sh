@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# *** WARNING ***
+# This script steals focus + sends keystrokes to the GUI. DO NOT RUN
+# while you are actively using the laptop. Per owner: must be
+# USER-INVOKED only.
+#
 # UI audit test — deeper than smoke_test.sh. Stress-tests via rapid
 # keypress, cycles every template, verifies persistence across restart,
 # resizes window mid-session. Captures screenshots at every interesting

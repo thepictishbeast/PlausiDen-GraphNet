@@ -1,5 +1,16 @@
 #!/usr/bin/env bash
-# UI deep audit — covers what ui_smoke + ui_audit miss:
+# UI deep audit — covers what ui_smoke + ui_audit miss.
+#
+# *** WARNING ***
+# This script launches the GraphNet GUI and drives it with xdotool keyboard
+# + mouse events. The window will pop up, take focus, and may receive
+# keypresses that look like text input on misbehaving WMs. DO NOT RUN
+# this while you are actively using the laptop — the cursor moves, the
+# window steals focus, screen recording fires for ~60s.
+#
+# Run only when the desktop is idle. Per owner direction: this script
+# must be USER-INVOKED, not autorun by Claude.
+#
 #   * Window title vs actual stack state consistency
 #   * Per-keypress response-latency measurement
 #   * Settings.yaml round-trip (modify in-app, kill, relaunch, verify)
@@ -59,18 +70,32 @@ assert_log() {
 
 launch() {
     pkill -9 -f graphnet-gui 2>/dev/null || true
-    sleep 0.8
+    sleep 1.2
     "$BIN" >/tmp/graphnet-deep-audit.log 2>&1 &
     GUI_PID=$!
-    sleep 4
-    if ! kill -0 "$GUI_PID" 2>/dev/null; then
-        fail "graphnet-gui crashed at startup"
-        tail -10 /tmp/graphnet-deep-audit.log
+    # Retry alive-check up to 6s — initial state.yaml restore can take time.
+    local alive=0
+    for i in 1 2 3 4 5 6; do
+        sleep 1
+        if kill -0 "$GUI_PID" 2>/dev/null; then
+            alive=1
+            break
+        fi
+    done
+    if [ "$alive" -ne 1 ]; then
+        fail "graphnet-gui crashed at startup (6s grace period elapsed)"
+        tail -20 /tmp/graphnet-deep-audit.log
         exit 1
     fi
-    WIN=$(xdotool search --name "GraphNet" | head -1)
+    # Retry window search up to 4s.
+    local WIN=""
+    for i in 1 2 3 4; do
+        WIN=$(xdotool search --name "GraphNet" 2>/dev/null | head -1)
+        [ -n "$WIN" ] && break
+        sleep 1
+    done
     if [ -z "$WIN" ]; then
-        fail "no window found"
+        fail "no window found after 4s"
         exit 1
     fi
     xdotool windowactivate "$WIN"
@@ -95,6 +120,18 @@ clean_state() {
 
 echo "==== Deep audit start ===="
 clean_state
+
+# Start screen recording — owner wants to see EXACTLY what the test does.
+# ffmpeg x11grab captures the full :0 display at 12fps (modest, keeps
+# file small + CPU usable). Output: /tmp/graphnet-audit-recording.mp4
+REC_PATH="${REC_PATH:-/tmp/graphnet-audit-recording.mp4}"
+echo "  [rec] starting screen capture → $REC_PATH"
+ffmpeg -y -f x11grab -framerate 12 -video_size 1920x1080 -i "$DISPLAY" \
+    -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
+    "$REC_PATH" </dev/null >/tmp/graphnet-audit-ffmpeg.log 2>&1 &
+FFMPEG_PID=$!
+sleep 1
+
 launch
 step "00_cold_start"
 
@@ -138,44 +175,28 @@ else
 fi
 step "B_after_a"
 
-# Phase C: console REPL commands work.
-echo "==== Phase C: console REPL ===="
-xdotool key --window "$WIN" grave  # open console
-sleep 0.3
-xdotool type --window "$WIN" "stat"
-xdotool key --window "$WIN" Return
-sleep 0.3
-step "C_console_stat"
-xdotool type --window "$WIN" "clear"
-xdotool key --window "$WIN" Return
-sleep 0.3
-xdotool key --window "$WIN" Escape  # close console
-step "C_console_closed"
+# Phase C: SKIPPED — same xdotool-type-focus issue as Phase D. The console
+# pane opens but typed characters are interpreted as keyboard shortcuts
+# unless the actual TextEdit widget has focus, which xdotool can't easily
+# guarantee. Console REPL works when driven from a real keyboard.
+echo "==== Phase C: console-REPL SKIPPED (xdotool type unreliable for TextEdit focus) ===="
 
-# Phase D: dim change handling — drop to 1000.
-echo "==== Phase D: dim change ===="
-# Can't easily slider via xdotool; use console.
-xdotool key --window "$WIN" grave
-sleep 0.3
-xdotool type --window "$WIN" "dim 1000"
-xdotool key --window "$WIN" Return
-sleep 0.5
-xdotool key --window "$WIN" Escape
-step "D_dim_1000"
-# NOTE: xdotool type into the console field is unreliable — the focus may
-# land on the console pane container, not the actual TextEdit widget. The
-# log entry for dim-change is exercised via the dim slider in the left
-# panel, which we can't easily click-drag here. Leaving assertion-free.
-if grep -qE "dim .* → 1000" "$LOG" 2>/dev/null; then
-    echo "  ✓ dim change DID fire (console focus worked)"
-else
-    echo "  (dim console command — focus may not have landed in TextEdit)"
-fi
+# Phase D: REMOVED — xdotool type "dim 1000" was interpreted as the digit
+# keys 1, 0, 0, 0 = template-switch shortcuts. This was actively spamming
+# template loads + likely the root cause of stray Ctrl+N reaching the file
+# manager. Dim change is tested only via the slider in the left panel
+# which we can't easily click-drag from xdotool.
+echo "==== Phase D: dim-via-console SKIPPED (xdotool type unreliable for console focus) ===="
 
 # Phase E: build a stack + save to slot, then recall.
 echo "==== Phase E: slot save/recall round-trip ===="
+# Re-activate the window in case Phase A-D modal interactions stole focus.
+xdotool windowactivate "$WIN"
+sleep 0.3
 xdotool key --window "$WIN" a
+sleep 0.1
 xdotool key --window "$WIN" d
+sleep 0.1
 xdotool key --window "$WIN" f
 sleep 0.3
 step "E_3_ops"
@@ -298,6 +319,19 @@ if command -v identify >/dev/null 2>&1; then
 fi
 
 shutdown
+
+# Stop screen recording — send SIGINT so ffmpeg flushes mp4 properly.
+echo "  [rec] stopping screen capture"
+kill -INT "$FFMPEG_PID" 2>/dev/null
+wait "$FFMPEG_PID" 2>/dev/null
+if [ -f "$REC_PATH" ]; then
+    SIZE=$(stat -c%s "$REC_PATH" 2>/dev/null || echo "0")
+    DURATION=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$REC_PATH" 2>/dev/null | head -1)
+    echo "  [rec] saved $REC_PATH (${SIZE} B, ${DURATION}s)"
+    echo "  [rec] watch with: vlc \"$REC_PATH\"  (or any video player)"
+else
+    fail "screen recording not saved"
+fi
 
 echo ""
 echo "==== Deep audit complete: $ERRORS errors ===="

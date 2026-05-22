@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# *** WARNING ***
+# Steals window focus + sends keystrokes. DO NOT RUN while you are
+# actively using the laptop. USER-INVOKED only.
+#
 # UI smoke test (#759) — drives the GraphNet GUI via xdotool, captures
 # a screenshot after each scripted interaction. Run from the repo root.
 #
