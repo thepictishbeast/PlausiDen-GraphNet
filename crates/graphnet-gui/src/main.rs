@@ -4107,7 +4107,7 @@ impl eframe::App for App {
                                 );
                             } else {
                                 let now = std::time::Instant::now();
-                                for entry in self.action_log.iter().rev().take(12) {
+                                for entry in self.action_log.iter().rev().take(14) {
                                     let age = now.duration_since(entry.at).as_secs_f32();
                                     let alpha = (1.0 - (age / 60.0).clamp(0.0, 0.7)).max(0.3);
                                     let base = entry.severity.color();
@@ -4117,21 +4117,26 @@ impl eframe::App for App {
                                         base.b(),
                                         (alpha * 255.0) as u8,
                                     );
+                                    let age_label = if age < 60.0 {
+                                        format!("{age:>3.0}s")
+                                    } else {
+                                        format!("{:>3}m", (age / 60.0) as u32)
+                                    };
                                     ui.horizontal(|ui| {
                                         ui.label(
-                                            egui::RichText::new(format!("{age:>4.1}s"))
+                                            egui::RichText::new(age_label)
                                                 .size(theme::SIZE_TINY)
                                                 .color(theme::TEXT_MUTED)
                                                 .monospace(),
                                         );
                                         ui.label(
                                             egui::RichText::new(entry.severity.glyph())
-                                                .size(theme::SIZE_SMALL)
+                                                .size(theme::SIZE_TINY)
                                                 .color(base),
                                         );
                                         ui.label(
                                             egui::RichText::new(&entry.msg)
-                                                .size(theme::SIZE_SMALL)
+                                                .size(theme::SIZE_TINY)
                                                 .color(colour),
                                         );
                                     });
