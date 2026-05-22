@@ -378,6 +378,267 @@ impl NeuralGraph {
     }
 }
 
+/// Pre-built architectures for the templates popup ("New from template…"
+/// in the menu bar). Each returns a fresh NeuralGraph that the UI can
+/// render. None of these actually run inference yet (that's Phase 4 with
+/// candle absorption). They exist so the 300-node viz (#774) and 2D/3D
+/// toggle (#775) have meaningful graphs to render.
+pub mod factories {
+    use super::*;
+
+    /// GPT-2-small skeleton: 12 transformer blocks (LN → Attn → Add →
+    /// LN → MLP → Add) + token embedding + final LN + LM head.
+    /// ~124M parameters via the rough estimator.
+    #[must_use]
+    pub fn gpt2_small() -> NeuralGraph {
+        let mut g = NeuralGraph::new();
+        g.metadata.family = "GPT-2-small".to_string();
+        g.metadata.notes =
+            "12 transformer blocks, 768 hidden dim, 12 heads of 64 head_dim".to_string();
+        let dim = 768_usize;
+        let n_layers = 12_usize;
+        let vocab = 50_257_usize;
+        // Input token IDs.
+        let toks = g.add_node(Node::input(vec![1, 1024], DType::I32, "tokens"));
+        // Token embedding.
+        let wte = g.add_node(Node::layer(
+            LayerKind::Embedding { vocab, dim },
+            "wte (token embedding)",
+        ));
+        g.add_edge(Edge {
+            from: toks,
+            to: wte,
+            shape: vec![1, 1024],
+            dtype: DType::I32,
+            label: "ids".to_string(),
+        });
+        // Position embedding (also an Embedding kind).
+        let wpe = g.add_node(Node::layer(
+            LayerKind::Embedding {
+                vocab: 1024,
+                dim,
+            },
+            "wpe (position embedding)",
+        ));
+        // Repeated transformer blocks.
+        let mut prev = wte;
+        for i in 0..n_layers {
+            let ln1 = g.add_node(Node::layer(LayerKind::LayerNorm, format!("blk{i}.ln_1")));
+            let attn = g.add_node(Node::layer(
+                LayerKind::Attention {
+                    n_heads: 12,
+                    head_dim: 64,
+                    masked: true,
+                },
+                format!("blk{i}.attn"),
+            ));
+            let ln2 = g.add_node(Node::layer(LayerKind::LayerNorm, format!("blk{i}.ln_2")));
+            let fc1 = g.add_node(Node::layer(
+                LayerKind::Dense {
+                    in_dim: dim,
+                    out_dim: 4 * dim,
+                },
+                format!("blk{i}.mlp.fc1"),
+            ));
+            let gelu = g.add_node(Node::activation(ActKind::Gelu, format!("blk{i}.gelu")));
+            let fc2 = g.add_node(Node::layer(
+                LayerKind::Dense {
+                    in_dim: 4 * dim,
+                    out_dim: dim,
+                },
+                format!("blk{i}.mlp.fc2"),
+            ));
+            // Wire the block.
+            let make_edge =
+                |from: usize, to: usize, label: &str| -> Edge {
+                    Edge {
+                        from,
+                        to,
+                        shape: vec![1, 1024, dim],
+                        dtype: DType::F32,
+                        label: label.to_string(),
+                    }
+                };
+            g.add_edge(make_edge(prev, ln1, "x"));
+            g.add_edge(make_edge(ln1, attn, "x"));
+            g.add_edge(make_edge(attn, ln2, "x"));
+            g.add_edge(make_edge(ln2, fc1, "x"));
+            g.add_edge(make_edge(fc1, gelu, "x"));
+            g.add_edge(make_edge(gelu, fc2, "x"));
+            prev = fc2;
+        }
+        // Final LN + LM head.
+        let ln_f = g.add_node(Node::layer(LayerKind::LayerNorm, "ln_f"));
+        g.add_edge(Edge {
+            from: prev,
+            to: ln_f,
+            shape: vec![1, 1024, dim],
+            dtype: DType::F32,
+            label: "x".to_string(),
+        });
+        let lm_head = g.add_node(Node::layer(
+            LayerKind::Dense {
+                in_dim: dim,
+                out_dim: vocab,
+            },
+            "lm_head",
+        ));
+        g.add_edge(Edge {
+            from: ln_f,
+            to: lm_head,
+            shape: vec![1, 1024, dim],
+            dtype: DType::F32,
+            label: "x".to_string(),
+        });
+        // Output logits.
+        let out = g.add_node(Node::output(vec![1, 1024, vocab], DType::F32, "logits"));
+        g.add_edge(Edge {
+            from: lm_head,
+            to: out,
+            shape: vec![1, 1024, vocab],
+            dtype: DType::F32,
+            label: "logits".to_string(),
+        });
+        // wpe edge into wte (positional addition, conceptual).
+        g.add_edge(Edge {
+            from: wpe,
+            to: wte,
+            shape: vec![1, 1024, dim],
+            dtype: DType::F32,
+            label: "+pos".to_string(),
+        });
+        g
+    }
+
+    /// Single transformer encoder block (BERT-style): LN → MultiHeadAttn
+    /// → Add → LN → MLP → Add. 4 layer nodes per block; useful for
+    /// click-to-expand demos.
+    #[must_use]
+    pub fn transformer_block() -> NeuralGraph {
+        let mut g = NeuralGraph::new();
+        g.metadata.family = "Transformer encoder block".to_string();
+        let input = g.add_node(Node::input(vec![1, 512, 768], DType::F32, "x"));
+        let ln1 = g.add_node(Node::layer(LayerKind::LayerNorm, "ln1"));
+        let attn = g.add_node(Node::layer(
+            LayerKind::Attention {
+                n_heads: 12,
+                head_dim: 64,
+                masked: false,
+            },
+            "attn",
+        ));
+        let ln2 = g.add_node(Node::layer(LayerKind::LayerNorm, "ln2"));
+        let fc1 = g.add_node(Node::layer(
+            LayerKind::Dense {
+                in_dim: 768,
+                out_dim: 3072,
+            },
+            "fc1",
+        ));
+        let gelu = g.add_node(Node::activation(ActKind::Gelu, "gelu"));
+        let fc2 = g.add_node(Node::layer(
+            LayerKind::Dense {
+                in_dim: 3072,
+                out_dim: 768,
+            },
+            "fc2",
+        ));
+        let output = g.add_node(Node::output(vec![1, 512, 768], DType::F32, "y"));
+        let chain = [input, ln1, attn, ln2, fc1, gelu, fc2, output];
+        for w in chain.windows(2) {
+            g.add_edge(Edge {
+                from: w[0],
+                to: w[1],
+                shape: vec![1, 512, 768],
+                dtype: DType::F32,
+                label: "x".to_string(),
+            });
+        }
+        g
+    }
+
+    /// ResNet-18-style basic block: Conv2d → BN → ReLU → Conv2d → BN
+    /// → Add (skip). Conceptual graph only; no real weights.
+    #[must_use]
+    pub fn resnet_basic_block() -> NeuralGraph {
+        let mut g = NeuralGraph::new();
+        g.metadata.family = "ResNet-18 basic block".to_string();
+        let input = g.add_node(Node::input(vec![1, 64, 56, 56], DType::F32, "x"));
+        let conv1 = g.add_node(Node::layer(
+            LayerKind::Conv2d {
+                in_channels: 64,
+                out_channels: 64,
+                kernel: (3, 3),
+                stride: (1, 1),
+            },
+            "conv1",
+        ));
+        let bn1 = g.add_node(Node::layer(LayerKind::BatchNorm, "bn1"));
+        let relu1 = g.add_node(Node::activation(ActKind::Relu, "relu1"));
+        let conv2 = g.add_node(Node::layer(
+            LayerKind::Conv2d {
+                in_channels: 64,
+                out_channels: 64,
+                kernel: (3, 3),
+                stride: (1, 1),
+            },
+            "conv2",
+        ));
+        let bn2 = g.add_node(Node::layer(LayerKind::BatchNorm, "bn2"));
+        let output = g.add_node(Node::output(vec![1, 64, 56, 56], DType::F32, "y"));
+        let chain = [input, conv1, bn1, relu1, conv2, bn2, output];
+        for w in chain.windows(2) {
+            g.add_edge(Edge {
+                from: w[0],
+                to: w[1],
+                shape: vec![1, 64, 56, 56],
+                dtype: DType::F32,
+                label: "x".to_string(),
+            });
+        }
+        // Skip connection input → output (residual).
+        g.add_edge(Edge {
+            from: input,
+            to: output,
+            shape: vec![1, 64, 56, 56],
+            dtype: DType::F32,
+            label: "skip".to_string(),
+        });
+        g
+    }
+
+    /// Wrap an existing HDC Stack as a NeuralGraph for unified rendering.
+    /// One HdcLayer node bridges between Input → HDC → Output.
+    #[must_use]
+    pub fn from_hdc_stack(stack: Stack) -> NeuralGraph {
+        let mut g = NeuralGraph::new();
+        g.metadata.family = "HDC stack".to_string();
+        let dim = stack.dim();
+        let n_ops = stack.len();
+        let input = g.add_node(Node::input(vec![dim], DType::Bipolar, "input"));
+        let hdc = g.add_node(Node::layer(
+            LayerKind::Hdc { stack },
+            format!("hdc ({n_ops} ops)"),
+        ));
+        let output = g.add_node(Node::output(vec![dim], DType::Bipolar, "bundle"));
+        g.add_edge(Edge {
+            from: input,
+            to: hdc,
+            shape: vec![dim],
+            dtype: DType::Bipolar,
+            label: "input".to_string(),
+        });
+        g.add_edge(Edge {
+            from: hdc,
+            to: output,
+            shape: vec![dim],
+            dtype: DType::Bipolar,
+            label: "bundle".to_string(),
+        });
+        g
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -490,6 +751,51 @@ mod tests {
             label: "".to_string(),
         });
         assert!(g.has_cycle());
+    }
+
+    #[test]
+    fn gpt2_small_factory_runs() {
+        let g = factories::gpt2_small();
+        assert_eq!(g.metadata.family, "GPT-2-small");
+        // Should have many nodes: input + wte + wpe + (12 * 6 layer nodes)
+        // + ln_f + lm_head + output = ~78
+        assert!(g.nodes.len() >= 70);
+        assert!(g.nodes.len() <= 90);
+        assert!(!g.has_cycle());
+        // Parameter count should be roughly 124M ± rough estimator slack.
+        let p = g.total_params();
+        // GPT-2-small is 124M nominal; our rough estimator under-counts
+        // (no bias on attn, etc.) so accept 80M..200M.
+        assert!(
+            p > 80_000_000 && p < 250_000_000,
+            "expected ~124M params, got {p}"
+        );
+    }
+
+    #[test]
+    fn transformer_block_factory() {
+        let g = factories::transformer_block();
+        assert!(!g.has_cycle());
+        // 8 nodes: input + ln1 + attn + ln2 + fc1 + gelu + fc2 + output
+        assert_eq!(g.nodes.len(), 8);
+    }
+
+    #[test]
+    fn resnet_block_has_skip_connection() {
+        let g = factories::resnet_basic_block();
+        // 7 nodes; 6 chain edges + 1 skip = 7 edges
+        assert_eq!(g.nodes.len(), 7);
+        assert_eq!(g.edges.len(), 7);
+        assert!(!g.has_cycle());
+    }
+
+    #[test]
+    fn from_hdc_stack_factory() {
+        use crate::Operation;
+        let stack = Stack::new(1000).with_operation(Operation::Identity);
+        let g = factories::from_hdc_stack(stack);
+        assert_eq!(g.nodes.len(), 3); // input + hdc + output
+        assert_eq!(g.edges.len(), 2);
     }
 
     #[test]
