@@ -111,6 +111,8 @@ struct App {
     recent_change: Option<(usize, std::time::Instant)>,
     /// Workspace tab (#743).
     workspace: Workspace,
+    /// Zoom-modal cell-size multiplier (#721).
+    zoom_modal_scale: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -586,6 +588,7 @@ impl App {
             demo_pace_sec: 2.5,
             recent_change: None,
             workspace: Workspace::Edit,
+            zoom_modal_scale: 1.0,
         };
         app.load_template("standard");
         // Try to restore previous session.
@@ -3511,17 +3514,37 @@ impl eframe::App for App {
                             .inner_margin(egui::Margin::same(theme::SPACE_XL)),
                     )
                     .show(ctx, |ui| {
-                        // Larger cells: 6 px instead of 4.
+                        // Pinch/scroll-zoom support (#721).
+                        let scroll = ui.input(|i| i.smooth_scroll_delta.y + i.zoom_delta() * 100.0);
+                        if scroll.abs() > 0.5 {
+                            self.zoom_modal_scale =
+                                (self.zoom_modal_scale * (1.0 + scroll / 800.0))
+                                    .clamp(0.3, 8.0);
+                        }
+                        let base_cell = 6.0_f32;
                         let cols = (v.dim() as f32).sqrt().ceil() as usize;
                         let cols = cols.clamp(40, 160);
-                        hypervector_heatmap(ui, &v, cols, 6.0);
+                        let cell = (base_cell * self.zoom_modal_scale).clamp(1.0, 30.0);
+                        egui::ScrollArea::both()
+                            .max_height(ui.available_height() - 50.0)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                hypervector_heatmap(ui, &v, cols, cell);
+                            });
                         ui.add_space(theme::SPACE_SM);
                         ui.horizontal(|ui| {
                             ui.label(
-                                egui::RichText::new(format!("dim = {}", v.dim()))
-                                    .color(theme::TEXT_MUTED)
-                                    .size(theme::SIZE_SMALL),
+                                egui::RichText::new(format!(
+                                    "dim = {} · zoom {:.2}× (scroll to adjust)",
+                                    v.dim(),
+                                    self.zoom_modal_scale
+                                ))
+                                .color(theme::TEXT_MUTED)
+                                .size(theme::SIZE_SMALL),
                             );
+                            if ui.button("Reset zoom").clicked() {
+                                self.zoom_modal_scale = 1.0;
+                            }
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
