@@ -6738,7 +6738,10 @@ fn architecture_graph_3d(
     click_flash: Option<(usize, f32)>,
 ) -> (Option<ArchClick>, f32, f32, f32, Option<ArchToolAction>) {
     let n_ops = op_tags.len();
-    let height = 360.0_f32;
+    // Iter 126 (#785): 3D viewport is THE focus per owner direction.
+    // Boosted from 360 → 520 px to match the JetBrains/FreeCAD/Blender
+    // convention of "center viewport is the largest area."
+    let height = 520.0_f32;
     let width = ui.available_width();
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click_and_drag());
