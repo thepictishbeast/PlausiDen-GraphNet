@@ -321,54 +321,60 @@ const WALKTHROUGH_STEPS: &[(&str, &str)] = &[
     (
         "Welcome to GraphNet",
         "A live REPL + graphing calculator for HDC neural networks. \
-         No training, no GPU model files — just compose operations and \
-         see what the network does, in real time. Press → for the tour.",
+         No training, no GPU model files — just compose ops and watch the \
+         network behave in real time. Press → for the tour.",
     ),
     (
-        "1. Pick a template",
-        "The left panel has 8 example configs (minimal · standard · echo-state · \
-         mixture-of-4 · fft-heavy · noise-resilience · dense-cascade · wide-D). \
-         Click one or press 1-8 — each loads a different Stack architecture. \
-         Each template has an explanation you'll see in iter 12.",
+        "1. Pick a template (or blank)",
+        "Click + New… in the left panel for the templates popup with 10 \
+         example configs + blank-stack option, or press number keys 1-9/0 \
+         for direct selection. Each template has an explanation on hover.",
     ),
     (
         "2. Run a forward",
-        "Press SPACE (or click '▶ Run forward'). The Stack applies every op \
-         to the input hypervector in parallel, then bundles the outputs into \
-         one HDC vector. The Output card shows the result + cosine similarity \
-         to the input.",
+        "Press SPACE (or click ▶ Run forward). The Stack applies every op \
+         in parallel and bundles the outputs into one HDC vector. The Output \
+         card and 3D arch graph animate to show data flowing.",
     ),
     (
         "3. Mutate the network live",
-        "Add ops (+Identity / +Dense / +HrrBind), remove (× on chip), reseed \
-         (⟳ regenerates the random key without removing). Drag the Dim slider \
-         to change hypervector dimensionality (256-16,384). The network \
-         updates immediately.",
+        "Keyboard: A/D/F/P/N adds Identity/Dense/HrrBind/Permute/Negate. \
+         Backspace removes the selected op. Right-click any chip for \
+         reseed/duplicate/move/convert/remove. Drag chips to reorder. \
+         Drag the Dim slider in Settings (or type a number).",
     ),
     (
-        "4. Inspect per-op behavior",
-        "After a forward, the architecture graph and Per-op inspector show \
-         each operation's individual output. Click any chip in the graph or \
-         the inspector chip row to see that op's heatmap + its cos_sim to \
-         both input and bundled output.",
+        "4. Inspect per-op behaviour",
+        "After a forward, the Per-op contribution bars + Per-op inspector \
+         in the right panel show each operation's individual output and its \
+         cos_sim to input + bundled. Click chips in the 3D arch graph or \
+         the inspector to drill in.",
     ),
     (
-        "5. Live continuous mode",
-        "Press L (or click '● Start live'). The Stack runs forward every \
-         frame; the status bar shows the FPS. The cos_sim and latency \
-         sparklines fill in over the last 128 forwards.",
+        "5. 3D architecture viewport",
+        "Drag the 3D graph for yaw/pitch. Shift+drag for roll. Top-left \
+         toolbar has reset, auto-rotate, zoom in/out. The graph shows \
+         particle data-flow during forwards. Settings → Heatmap colormap \
+         picks bipolar/viridis/plasma/mono.",
     ),
     (
-        "6. Save & share",
-        "⌘S (or Ctrl+S) saves the current Stack to YAML at graphnet-stack.yaml. \
-         ⌘O loads it back. The app also auto-saves to ~/.config/graphnet/state.yaml \
-         on every save so your work survives a restart.",
+        "6. Live mode + objectives",
+        "Press L to start live continuous mode (FPS shown). The right panel \
+         tracks: cos_sim history, latency history, achievements (12 badges), \
+         and a 10-step Objectives card that guides discovery.",
     ),
     (
-        "7. Help is always there",
-        "Press H or F1 anytime to see the full shortcuts list AND a list of \
-         experiment recipes to try. Drag-and-drop a .yaml file onto the window \
-         to load it. Press Esc to close any modal.",
+        "7. Save / Load / Share / Console",
+        "⌘S / ⌘O for save/load YAML (native file dialogs). ⌘E for PNG \
+         export. Drag-drop a .yaml on the window to load. Press ` (backtick) \
+         for the REPL/console — type 'help' for commands. Auto-saves to \
+         ~/.config/graphnet/state.yaml.",
+    ),
+    (
+        "8. Help is always there",
+        "Press H or F1 anytime — shows shortcuts, achievements grid, \
+         experiment recipes. Adaptive hints surface a banner if you're \
+         idle for 30 seconds with stuck state. Esc closes any modal.",
     ),
 ];
 
