@@ -1132,6 +1132,10 @@ impl App {
             if entry_scale.is_some() {
                 ctx.request_repaint();
             }
+            let live_mode_flag = self.live;
+            if live_mode_flag {
+                ctx.request_repaint();
+            }
             let (clicked, new_yaw, new_pitch, new_roll, action) = architecture_graph_3d(
                 ui,
                 &op_tags,
@@ -1145,6 +1149,7 @@ impl App {
                 contrib_slice,
                 click_flash,
                 entry_scale,
+                live_mode_flag,
             );
             if let Some(click) = clicked {
                 graph_click = Some(click);
@@ -7529,6 +7534,8 @@ fn architecture_graph_3d(
     click_flash: Option<(usize, f32)>,
     // (op_idx, scale_factor 0..1) — newly-added ops grow from 0.5x to 1.0x.
     entry_scale: Option<(usize, f32)>,
+    // When true, BUNDLE node breathes — live-mode indicator.
+    live_mode: bool,
 ) -> (Option<ArchClick>, f32, f32, f32, Option<ArchToolAction>) {
     let n_ops = op_tags.len();
     // Iter 126 (#785): 3D viewport is THE focus per owner direction.
@@ -7758,6 +7765,28 @@ fn architecture_graph_3d(
             }
             Node::Bundle => {
                 let r = 30.0 * size_mul;
+                // Live-mode breathing glow: faint pulsing halo around BUNDLE.
+                if live_mode {
+                    let t = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs_f32())
+                        .unwrap_or(0.0);
+                    let breathe = (t * 2.0).sin() * 0.5 + 0.5; // 0..1, 1Hz
+                    let halo_r = r + 10.0 + breathe * 12.0;
+                    painter.circle_stroke(
+                        *pos,
+                        halo_r,
+                        egui::Stroke::new(
+                            1.5,
+                            egui::Color32::from_rgba_unmultiplied(
+                                theme::ACCENT_PURPLE.r(),
+                                theme::ACCENT_PURPLE.g(),
+                                theme::ACCENT_PURPLE.b(),
+                                ((1.0 - breathe) * 180.0) as u8,
+                            ),
+                        ),
+                    );
+                }
                 shaded_node(&painter, *pos, r, theme::ACCENT_PURPLE, "BUNDLE", size_mul);
                 arch_hit_test(*pos, r, click_pos, _right_click_pos, hover_pos, &painter, ArchClick::Bundle, &mut clicked);
             }
