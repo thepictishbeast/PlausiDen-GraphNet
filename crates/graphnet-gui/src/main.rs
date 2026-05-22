@@ -99,6 +99,8 @@ struct App {
     console_input: String,
     /// Console history of (command, output) lines.
     console_history: Vec<(String, String)>,
+    /// Console history cursor for up-arrow recall (-1 = no recall active).
+    console_history_cursor: i32,
     /// Timestamp of the user's last input action (key/click/forward).
     last_user_action: std::time::Instant,
     /// Currently-active adaptive-tutorial hint (None if no hint).
@@ -465,10 +467,12 @@ const WALKTHROUGH_STEPS: &[(&str, &str)] = &[
     ),
     (
         "5. 3D architecture viewport",
-        "Drag the 3D graph for yaw/pitch. Shift+drag for roll. Top-left \
-         toolbar has reset, auto-rotate, zoom in/out. The graph shows \
-         particle data-flow during forwards. Settings → Heatmap colormap \
-         picks bipolar/viridis/plasma/mono.",
+        "Drag the 3D graph for yaw/pitch. Shift+drag for roll. Scroll wheel \
+         zooms. F resets rotation. Click an op node to select; the inline \
+         editor under the graph lets you reseed / duplicate / move / remove \
+         / convert. Right-click an op chip in the sidebar for the full \
+         context menu. Each op kind has a unique symbolic glyph in its 3D \
+         node.",
     ),
     (
         "6. Live mode + objectives",
@@ -666,6 +670,7 @@ impl App {
             show_console: false,
             console_input: String::new(),
             console_history: Vec::new(),
+            console_history_cursor: -1,
             last_user_action: std::time::Instant::now(),
             adaptive_hint: None,
             font_scale: 1.0,
@@ -3293,10 +3298,47 @@ impl eframe::App for App {
                             && ui.input(|i| i.key_pressed(egui::Key::Enter))
                         {
                             submit = Some(std::mem::take(&mut self.console_input));
+                            self.console_history_cursor = -1;
                             resp.request_focus();
+                        }
+                        // Up arrow → recall previous command.
+                        if resp.has_focus()
+                            && ui.input(|i| i.key_pressed(egui::Key::ArrowUp))
+                        {
+                            let n = self.console_history.len() as i32;
+                            if n > 0 {
+                                self.console_history_cursor =
+                                    (self.console_history_cursor + 1).min(n - 1);
+                                let idx =
+                                    (n - 1 - self.console_history_cursor).max(0) as usize;
+                                if let Some((cmd, _)) =
+                                    self.console_history.get(idx)
+                                {
+                                    self.console_input = cmd.clone();
+                                }
+                            }
+                        }
+                        if resp.has_focus()
+                            && ui.input(|i| i.key_pressed(egui::Key::ArrowDown))
+                        {
+                            if self.console_history_cursor > 0 {
+                                self.console_history_cursor -= 1;
+                                let n = self.console_history.len() as i32;
+                                let idx =
+                                    (n - 1 - self.console_history_cursor).max(0) as usize;
+                                if let Some((cmd, _)) =
+                                    self.console_history.get(idx)
+                                {
+                                    self.console_input = cmd.clone();
+                                }
+                            } else if self.console_history_cursor == 0 {
+                                self.console_history_cursor = -1;
+                                self.console_input.clear();
+                            }
                         }
                         if ui.button("run").clicked() {
                             submit = Some(std::mem::take(&mut self.console_input));
+                            self.console_history_cursor = -1;
                         }
                     });
                 });
