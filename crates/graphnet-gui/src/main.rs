@@ -2173,22 +2173,27 @@ impl eframe::App for App {
                             }
                             let paused = self.demo.as_ref().is_some_and(|d| d.paused);
                             let pp_lbl = if paused { " ▶ " } else { " ⏸ " };
-                            if hero_btn(ui, pp_lbl, false).clicked() {
+                            if hero_btn(ui, pp_lbl, paused).clicked() {
                                 self.demo_pause_toggle();
                             }
                             if hero_btn(ui, " ⏭ ", false).clicked() {
                                 self.demo_skip(1);
                             }
-                            // Progress text.
+                            // Progress text + pause indicator.
                             if let Some(d) = &self.demo {
                                 ui.label(
                                     egui::RichText::new(format!(
-                                        "{}/{}",
+                                        "{}/{}{}",
                                         d.template_idx + 1,
-                                        TEMPLATES.len()
+                                        TEMPLATES.len(),
+                                        if paused { " (paused)" } else { "" }
                                     ))
                                     .size(theme::SIZE_TINY)
-                                    .color(theme::TEXT_MUTED)
+                                    .color(if paused {
+                                        theme::ACCENT_PURPLE
+                                    } else {
+                                        theme::TEXT_MUTED
+                                    })
                                     .monospace(),
                                 );
                             }
