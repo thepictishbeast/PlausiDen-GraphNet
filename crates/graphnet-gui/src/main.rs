@@ -5318,56 +5318,118 @@ impl eframe::App for App {
         // Console / REPL pane (#747) — bottom-docked when shown.
         if self.show_console {
             let mut submit: Option<String> = None;
+            let mut clear_history = false;
             egui::TopBottomPanel::bottom("console")
                 .resizable(true)
-                .default_height(220.0)
-                .min_height(120.0)
+                .default_height(260.0)
+                .min_height(140.0)
                 .frame(
                     egui::Frame::none()
-                        .fill(theme::BG_CARD)
+                        .fill(egui::Color32::from_rgb(0x0A, 0x0D, 0x14))
                         .stroke(egui::Stroke::new(1.0, theme::ACCENT_BLUE))
                         .inner_margin(egui::Margin::same(theme::SPACE_MD)),
                 )
                 .show(ctx, |ui| {
+                    // Header with title + history count + clear + close.
                     ui.horizontal(|ui| {
                         ui.label(
-                            egui::RichText::new("⌨ Console")
+                            egui::RichText::new("⌨ GraphNet REPL")
                                 .size(theme::SIZE_BODY)
                                 .color(theme::ACCENT_BLUE)
-                                .strong(),
+                                .strong()
+                                .monospace(),
                         );
+                        ui.separator();
                         ui.label(
-                            egui::RichText::new("(backtick toggles · type 'help')")
-                                .size(theme::SIZE_TINY)
-                                .color(theme::TEXT_MUTED),
+                            egui::RichText::new(format!(
+                                "{} entries · 'help' for cmds · ↑↓ history · Tab complete · ` close",
+                                self.console_history.len()
+                            ))
+                            .size(theme::SIZE_TINY)
+                            .color(theme::TEXT_MUTED),
                         );
                         ui.with_layout(
                             egui::Layout::right_to_left(egui::Align::Center),
                             |ui| {
-                                if ui.button("close").clicked() {
+                                if ui.button("✕").on_hover_text("close (backtick)").clicked() {
                                     self.show_console = false;
+                                }
+                                if !self.console_history.is_empty()
+                                    && ui.button("🗑").on_hover_text("clear history").clicked()
+                                {
+                                    clear_history = true;
                                 }
                             },
                         );
                     });
+                    ui.add_space(2.0);
                     ui.separator();
+                    ui.add_space(theme::SPACE_XS);
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
-                        .max_height(120.0)
+                        .max_height(ui.available_height() - 36.0)
                         .stick_to_bottom(true)
                         .show(ui, |ui| {
-                            for (cmd, out) in &self.console_history {
+                            // Welcome banner shown only when history is empty.
+                            if self.console_history.is_empty() {
                                 ui.label(
-                                    egui::RichText::new(format!("> {cmd}"))
-                                        .size(theme::SIZE_SMALL)
-                                        .color(theme::ACCENT_BLUE)
-                                        .monospace(),
+                                    egui::RichText::new(
+                                        "GraphNet REPL — interactive HDC scratchpad",
+                                    )
+                                    .size(theme::SIZE_BODY)
+                                    .color(theme::ACCENT_PURPLE)
+                                    .strong()
+                                    .monospace(),
                                 );
-                                if !out.is_empty() {
+                                ui.label(
+                                    egui::RichText::new(
+                                        "Type a command + Enter. Try: help · stat · fwd · add dense · template standard · save · regen · undo",
+                                    )
+                                    .size(theme::SIZE_SMALL)
+                                    .color(theme::TEXT_MUTED)
+                                    .monospace(),
+                                );
+                                ui.add_space(theme::SPACE_SM);
+                            }
+                            for (cmd, out) in &self.console_history {
+                                // Prompt row: bright > + command in accent cyan
+                                ui.horizontal(|ui| {
                                     ui.label(
-                                        egui::RichText::new(out)
-                                            .size(theme::SIZE_SMALL)
+                                        egui::RichText::new("›")
+                                            .size(theme::SIZE_BODY)
+                                            .color(theme::ACCENT_BLUE)
+                                            .strong()
+                                            .monospace(),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(cmd)
+                                            .size(theme::SIZE_BODY)
                                             .color(theme::TEXT_PRIMARY)
+                                            .strong()
+                                            .monospace(),
+                                    );
+                                });
+                                if !out.is_empty() {
+                                    // Color-code output: error red / OK green / default muted.
+                                    let lower = out.to_lowercase();
+                                    let out_color = if lower.contains("error")
+                                        || lower.contains("invalid")
+                                        || lower.contains("failed")
+                                    {
+                                        egui::Color32::from_rgb(0xE0, 0x6A, 0x5B)
+                                    } else if lower.contains("loaded")
+                                        || lower.contains("saved")
+                                        || lower.starts_with("ran ")
+                                        || lower.starts_with("added")
+                                    {
+                                        egui::Color32::from_rgb(0x4D, 0xC4, 0x82)
+                                    } else {
+                                        theme::TEXT_MUTED
+                                    };
+                                    ui.label(
+                                        egui::RichText::new(format!("  {out}"))
+                                            .size(theme::SIZE_SMALL)
+                                            .color(out_color)
                                             .monospace(),
                                     );
                                 }
@@ -5474,6 +5536,9 @@ impl eframe::App for App {
                         }
                     });
                 });
+            if clear_history {
+                self.console_history.clear();
+            }
             if let Some(cmd) = submit {
                 let out = self.run_console_cmd(&cmd);
                 if !cmd.trim().is_empty() {
