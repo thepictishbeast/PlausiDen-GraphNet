@@ -2385,7 +2385,7 @@ impl eframe::App for App {
                         .map(|ms| format!("last: {ms:.3} ms"))
                         .unwrap_or_else(|| "last: —".to_string());
                     let live_label = if self.live {
-                        format!("● live @ {:.0} fps", self.live_fps)
+                        format!("REC @ {:.0} fps", self.live_fps)
                     } else {
                         String::new()
                     };
@@ -2401,6 +2401,35 @@ impl eframe::App for App {
                             } else {
                                 theme::TEXT_MUTED
                             }),
+                    );
+                    // Pulsing red dot (REC indicator) when live mode is on —
+                    // game-like visual confirmation.
+                    if self.live {
+                        let t = (std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs_f32())
+                            .unwrap_or(0.0)
+                            * 4.0)
+                            .sin()
+                            * 0.5
+                            + 0.5;
+                        let (rect, _) = ui.allocate_exact_size(
+                            egui::vec2(12.0, 12.0),
+                            egui::Sense::hover(),
+                        );
+                        let centre = rect.center();
+                        let alpha = (180.0 + 75.0 * t) as u8;
+                        ui.painter().circle_filled(
+                            centre,
+                            5.0,
+                            egui::Color32::from_rgba_unmultiplied(0xFF, 0x4D, 0x4D, alpha),
+                        );
+                        ctx.request_repaint();
+                    }
+                    // Dummy label so the layout doesn't double-wrap.
+                    ui.label(
+                        egui::RichText::new("")
+                            .size(theme::SIZE_SMALL),
                     );
 
                     // Frame-budget indicator dot (green ≤16ms, amber ≤32ms, red >32ms).
