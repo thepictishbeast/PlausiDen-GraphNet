@@ -4058,10 +4058,21 @@ impl eframe::App for App {
                     .inner_margin(egui::Margin::same(theme::SPACE_LG)),
             )
             .show(ctx, |ui| {
-                // IDE-style header bar with close ×.
+                // IDE-style header bar — title reflects current contents.
+                let panel_title = if self.last_trace.is_some() {
+                    format!(
+                        "Inspector · {} actions · {} forwards",
+                        self.action_log.len(),
+                        self.forwards
+                    )
+                } else if !self.action_log.is_empty() {
+                    format!("Activity · {} entries", self.action_log.len())
+                } else {
+                    "Inspector".to_string()
+                };
                 ui.horizontal(|ui| {
                     ui.label(
-                        egui::RichText::new("Inspector")
+                        egui::RichText::new(panel_title)
                             .size(theme::SIZE_TINY)
                             .color(theme::ACCENT_PURPLE)
                             .strong(),
