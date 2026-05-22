@@ -5877,6 +5877,40 @@ fn architecture_graph_3d(
                 }
                 // Symbolic glyph in the upper-right of the node (#756).
                 draw_op_glyph(&painter, *pos, r, tag, size_mul);
+                // Contribution magnitude bar above the node (game-like health bar).
+                if let Some(mag) = contributions.and_then(|c| c.get(*i)) {
+                    let mag_norm = mag.abs().min(1.0) as f32;
+                    if mag_norm > 0.02 {
+                        let bar_w = r * 1.6;
+                        let bar_h = 4.0;
+                        let bar_x = pos.x - bar_w / 2.0;
+                        let bar_y = pos.y - r - 9.0;
+                        // Background track.
+                        painter.rect_filled(
+                            egui::Rect::from_min_size(
+                                egui::pos2(bar_x, bar_y),
+                                egui::vec2(bar_w, bar_h),
+                            ),
+                            2.0,
+                            theme::BG_CARD_HOVER,
+                        );
+                        // Filled portion.
+                        let fill_w = bar_w * mag_norm;
+                        let fill_colour = if *mag >= 0.0 {
+                            theme::op_color(tag)
+                        } else {
+                            theme::op_color(tag).gamma_multiply(0.5)
+                        };
+                        painter.rect_filled(
+                            egui::Rect::from_min_size(
+                                egui::pos2(bar_x, bar_y),
+                                egui::vec2(fill_w, bar_h),
+                            ),
+                            2.0,
+                            fill_colour,
+                        );
+                    }
+                }
                 // Click flash halo — bright white pulse on freshly-clicked node.
                 if let Some((flash_idx, intensity)) = click_flash {
                     if flash_idx == *i {
