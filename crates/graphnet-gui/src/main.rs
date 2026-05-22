@@ -6001,20 +6001,28 @@ impl eframe::App for App {
                                 .color(theme::ACCENT_PURPLE),
                             );
                         }
+                        // Match Output card metrics density: dim + %+1 + fp + bp.
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(format!("dim = {}", input_clone.dim()))
+                                    .size(theme::SIZE_BODY),
+                            );
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "· {:.1}% +1",
+                                    input_summary.percent_positive * 100.0
+                                ))
+                                .size(theme::SIZE_SMALL)
+                                .color(theme::TEXT_MUTED),
+                            );
+                        });
                         ui.label(
-                            egui::RichText::new(format!(
-                                "fp {} · {:.1}% +1",
-                                input_summary.fingerprint,
-                                input_summary.percent_positive * 100.0
-                            ))
-                            .size(theme::SIZE_TINY)
-                            .color(theme::TEXT_MUTED)
-                            .monospace(),
+                            egui::RichText::new(format!("fp {}", input_summary.fingerprint))
+                                .size(theme::SIZE_TINY)
+                                .color(theme::TEXT_MUTED)
+                                .monospace(),
                         )
-                        .on_hover_text(
-                            "fp = blake3 fingerprint of the hypervector\n\
-                             % +1 = fraction of components with positive sign",
-                        );
+                        .on_hover_text("fp = blake3 fingerprint of the hypervector");
                         ui.label(
                             egui::RichText::new(format!("…{}…", input_summary.binary_prefix))
                                 .size(theme::SIZE_BODY)
@@ -6022,7 +6030,17 @@ impl eframe::App for App {
                                 .monospace(),
                         )
                         .on_hover_text("First 24 components as binary (1 = +1, 0 = -1)");
-                        ui.add_space(theme::SPACE_SM);
+                        // Spacer to match the Output card's latency + bits-differ
+                        // + cos_sim_bar rows so card heights align.
+                        ui.label(
+                            egui::RichText::new(" ")
+                                .size(theme::SIZE_TINY),
+                        );
+                        ui.label(
+                            egui::RichText::new(" ")
+                                .size(theme::SIZE_TINY),
+                        );
+                        ui.add_space(theme::SPACE_MD);
                         if hypervector_heatmap_clickable_cmap(ui, &input_clone, 80, 1.6, self.colormap) {
                             zoom_request_local = Some(ZoomTarget::Input);
                         }
