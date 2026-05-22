@@ -1955,6 +1955,29 @@ impl eframe::App for App {
                         if resp.clicked() {
                             self.workspace = *ws;
                             self.set_status(format!("workspace → {}", ws.label()));
+                            // Workspace tabs ACTUALLY change behavior now.
+                            match ws {
+                                Workspace::Edit => {
+                                    self.tool_mode = ToolMode::Edit;
+                                    self.live = false;
+                                }
+                                Workspace::Live => {
+                                    self.tool_mode = ToolMode::Edit;
+                                    self.live = true; // auto-start live mode
+                                    // Maximize 3D real estate by collapsing left panel.
+                                    self.show_left_panel = false;
+                                }
+                                Workspace::Compare => {
+                                    self.tool_mode = ToolMode::Compare;
+                                    self.live = false;
+                                    self.show_left_panel = true;
+                                }
+                                Workspace::Train => {
+                                    self.tool_mode = ToolMode::Edit;
+                                    self.live = false;
+                                    self.show_left_panel = true;
+                                }
+                            }
                         }
                         ui.add_space(2.0);
                     }
