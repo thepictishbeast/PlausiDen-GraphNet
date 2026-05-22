@@ -93,10 +93,26 @@ for k in 1 2 3 4 5 6 7 8 9 0; do
 done
 
 echo "==== Phase 6: workspace tour ===="
-# Click each workspace tab via keyboard? No, tabs need clicks.
-# Use ⌘1 to save current as slot A first, then mock Compare via tab.
+# Save current to slot A then click Compare tab via xdotool mouse.
 xdotool key --window "$WIN" ctrl+1
 step "p6_00_slot_a_saved"
+# Compare tab is the 3rd workspace pill in the hero. Approx coords.
+# Get window geometry to compute click pos.
+GEOM=$(xdotool getwindowgeometry --shell "$WIN" 2>/dev/null)
+WX=$(echo "$GEOM" | awk -F= '/^X=/{print $2}')
+WY=$(echo "$GEOM" | awk -F= '/^Y=/{print $2}')
+# Hero workspace tabs sit ~16px from left, ~12px from top. Edit / Live /
+# Compare / Train widths ~58 / 50 / 76 / 60 px each. Compare center ≈ x+150.
+xdotool mousemove $((WX + 200)) $((WY + 26)) click 1
+sleep 0.5
+step "p6_01_compare_tab"
+# Cmd+2 saves slot B.
+xdotool key --window "$WIN" ctrl+2
+step "p6_02_slot_b_saved"
+# Click Edit tab back.
+xdotool mousemove $((WX + 60)) $((WY + 26)) click 1
+sleep 0.5
+step "p6_03_back_to_edit"
 
 echo "==== Phase 7: open + close every modal ===="
 xdotool key --window "$WIN" h
@@ -164,6 +180,29 @@ sleep 0.5
 step "p11_01_wide"
 xdotool key --window "$WIN" super+f 2>/dev/null || true  # try toggle fullscreen
 sleep 0.5
+
+echo "==== Phase 11.5: log-file behavior assertions ===="
+LOG="${XDG_CONFIG_HOME:-$HOME/.config}/graphnet/graphnet.log"
+if [ ! -f "$LOG" ]; then
+    fail "no graphnet.log written — log persistence broken"
+else
+    LC=$(wc -l < "$LOG")
+    echo "  log lines: $LC"
+    # Check for canonical events we expect to see.
+    assert_logged() {
+        local pattern="$1"
+        local label="$2"
+        if grep -q "$pattern" "$LOG"; then
+            echo "  ✓ logged: $label"
+        else
+            fail "MISSING log entry for: $label (pattern: $pattern)"
+        fi
+    }
+    assert_logged "template '.*' loaded" "any template load"
+    assert_logged "+ op \[" "any op add"
+    assert_logged "💾 persisted" "any persist"
+    assert_logged "live mode" "live mode toggle"
+fi
 
 echo "==== Phase 12: shutdown ===="
 shutdown
