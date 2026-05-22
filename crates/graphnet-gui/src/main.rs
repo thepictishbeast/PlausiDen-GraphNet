@@ -8118,6 +8118,71 @@ fn architecture_graph_3d(
         tool_action = Some(ArchToolAction::ZoomOut);
     }
 
+    // Callout box for the selected op — scientific-vis style with a
+    // connector line back to the 3D node. Inspired by the user's grading-
+    // curve reference image (3D Examples/).
+    if let Some(sel_idx) = selected {
+        if let Some((sel_pos, _)) = op_screen.get(sel_idx).copied() {
+            let tag = op_tags.get(sel_idx).map(|s| s.as_str()).unwrap_or("?");
+            let contrib_str = contributions
+                .and_then(|c| c.get(sel_idx))
+                .map(|s| format!("c = {s:+.3}"))
+                .unwrap_or_default();
+            let box_w = 130.0;
+            let box_h = 50.0;
+            let box_origin = egui::pos2(
+                rect.max.x - box_w - 10.0,
+                rect.min.y + 70.0,
+            );
+            let box_rect =
+                egui::Rect::from_min_size(box_origin, egui::vec2(box_w, box_h));
+            // Connector line — node → box corner closest to node.
+            let target = egui::pos2(box_rect.min.x, box_rect.center().y);
+            let mid = egui::pos2((sel_pos.x + target.x) / 2.0, target.y);
+            painter.line_segment(
+                [sel_pos, mid],
+                egui::Stroke::new(1.0, theme::op_color(tag).gamma_multiply(0.7)),
+            );
+            painter.line_segment(
+                [mid, target],
+                egui::Stroke::new(1.0, theme::op_color(tag).gamma_multiply(0.7)),
+            );
+            painter.circle_filled(target, 2.5, theme::op_color(tag));
+            // Box.
+            painter.rect_filled(
+                box_rect,
+                theme::RADIUS_SM,
+                theme::BG_CARD.gamma_multiply(0.85),
+            );
+            painter.rect_stroke(
+                box_rect,
+                theme::RADIUS_SM,
+                egui::Stroke::new(1.0, theme::op_color(tag)),
+            );
+            painter.text(
+                egui::pos2(box_rect.min.x + 8.0, box_rect.min.y + 8.0),
+                egui::Align2::LEFT_TOP,
+                format!("[{sel_idx}]  {tag}"),
+                egui::FontId::proportional(theme::SIZE_SMALL),
+                theme::op_color(tag),
+            );
+            painter.text(
+                egui::pos2(box_rect.min.x + 8.0, box_rect.min.y + 24.0),
+                egui::Align2::LEFT_TOP,
+                contrib_str,
+                egui::FontId::proportional(theme::SIZE_TINY),
+                theme::TEXT_MUTED,
+            );
+            painter.text(
+                egui::pos2(box_rect.min.x + 8.0, box_rect.min.y + 36.0),
+                egui::Align2::LEFT_TOP,
+                "← / → to nav · × to remove",
+                egui::FontId::proportional(theme::SIZE_TINY),
+                theme::TEXT_DIM,
+            );
+        }
+    }
+
     // Hint text — updated for new shortcuts.
     painter.text(
         egui::pos2(rect.min.x + 6.0, rect.max.y - 6.0),
