@@ -4068,6 +4068,8 @@ impl eframe::App for App {
                         let hints = self.smart_suggestions();
                         if !hints.is_empty() {
                             ui.add_space(theme::SPACE_LG);
+                            ui.separator();
+                            ui.add_space(theme::SPACE_XS);
                             section_heading(ui, "💡 Suggestions");
                             ui.add_space(theme::SPACE_SM);
                             card(ui, |ui| {
@@ -4091,6 +4093,8 @@ impl eframe::App for App {
 
                         if !self.cos_sim_history.is_empty() {
                             ui.add_space(theme::SPACE_LG);
+                            ui.separator();
+                            ui.add_space(theme::SPACE_XS);
                             section_heading(ui, "cos_sim history");
                             ui.add_space(theme::SPACE_SM);
                             card(ui, |ui| {
@@ -4112,6 +4116,8 @@ impl eframe::App for App {
                         // Per-op contribution + inspector — moved from central.
                         if let Some(trace) = self.last_trace.clone() {
                             ui.add_space(theme::SPACE_LG);
+                            ui.separator();
+                            ui.add_space(theme::SPACE_XS);
                             section_heading(ui, "Per-op contribution");
                             ui.add_space(theme::SPACE_SM);
                             let contributions: Vec<(usize, String, f64)> = trace
