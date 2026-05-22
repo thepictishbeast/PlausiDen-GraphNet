@@ -86,7 +86,16 @@ pub fn install(ctx: &egui::Context) {
     install_dark(ctx);
 }
 
+/// Register the Phosphor icon font alongside the default fonts so we can
+/// use phosphor icon glyphs anywhere in the UI.
+fn install_phosphor_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+    ctx.set_fonts(fonts);
+}
+
 pub fn install_dark(ctx: &egui::Context) {
+    install_phosphor_fonts(ctx);
     let mut style = (*ctx.style()).clone();
 
     use egui::FontFamily::Proportional;
@@ -152,6 +161,7 @@ pub fn install_dark(ctx: &egui::Context) {
 }
 
 pub fn install_light(ctx: &egui::Context) {
+    install_phosphor_fonts(ctx);
     let mut style = (*ctx.style()).clone();
     use egui::FontFamily::Proportional;
     use egui::FontId;

@@ -119,10 +119,24 @@ struct App {
     slots: [Option<Stack>; 4],
     /// Which slot is currently active for editing (matches App.stack).
     active_slot: usize,
+    /// Audio output stream + sink (#723). None when audio is disabled.
+    audio: Option<AudioState>,
+    /// User-facing audio enable toggle.
+    audio_enabled: bool,
     /// Show the left arch panel? (User can collapse it via [Tab].)
     show_left_panel: bool,
     /// Show the right action/contrib panel?
     show_right_panel: bool,
+    /// Show the floating stats window? (#741)
+    show_floating_stats: bool,
+    /// Show the floating mini-help window? (#741)
+    show_floating_minihelp: bool,
+}
+
+struct AudioState {
+    /// Stub for now — real rodio output requires libasound2-dev on Linux.
+    /// When available, hold OutputStream + OutputStreamHandle here.
+    _placeholder: (),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -602,8 +616,12 @@ impl App {
             snapshot_stack: None,
             show_left_panel: true,
             show_right_panel: true,
+            show_floating_stats: false,
+            show_floating_minihelp: false,
             slots: [None, None, None, None],
             active_slot: 0,
+            audio: None,
+            audio_enabled: false,
         };
         app.load_template("standard");
         // Try to restore previous session.
@@ -903,6 +921,7 @@ impl App {
             self.forwards = self.forwards.saturating_add(1);
             self.last_forward_at = Some(std::time::Instant::now());
             self.check_achievements();
+            self.play_forward_tone(sim);
         }
     }
 
@@ -1025,6 +1044,30 @@ impl App {
             }
             _ => format!("unknown command: '{cmd}' (try 'help')"),
         }
+    }
+
+    /// Toggle audio output (#723). Stubbed until libasound2-dev is on the
+    /// build host — when reinstated, lazily initialize the rodio output
+    /// stream here.
+    fn toggle_audio(&mut self) {
+        self.audio_enabled = !self.audio_enabled;
+        if self.audio_enabled && self.audio.is_none() {
+            self.audio = Some(AudioState { _placeholder: () });
+            self.log(
+                LogSeverity::Warn,
+                "audio: enabled (stub — needs libasound2-dev for real sound)".to_string(),
+            );
+        } else if self.audio_enabled {
+            self.log(LogSeverity::Info, "audio: enabled (stub)".to_string());
+        } else {
+            self.log(LogSeverity::Info, "audio: muted".to_string());
+        }
+    }
+
+    /// Stub: when rodio is reinstated, play a short tone here.
+    fn play_forward_tone(&self, _sim: Option<f64>) {
+        // Intentionally silent until libasound2-dev is available on the
+        // build host. self.audio_enabled gates the future call site.
     }
 
     /// Compute a human-readable summary of a hypervector (#753).
@@ -1970,6 +2013,16 @@ impl eframe::App for App {
                     section_heading(ui, "Behaviour");
                     ui.add_space(theme::SPACE_SM);
                     card(ui, |ui| {
+                        // Audio toggle.
+                        let label = if self.audio_enabled {
+                            "🔊 audio: on"
+                        } else {
+                            "🔇 audio: off"
+                        };
+                        if ui.button(label).clicked() {
+                            self.toggle_audio();
+                        }
+                        ui.add_space(theme::SPACE_SM);
                         ui.label(
                             egui::RichText::new("input seed")
                                 .color(theme::TEXT_MUTED)
@@ -2035,6 +2088,11 @@ impl eframe::App for App {
                         });
                         ui.checkbox(&mut self.arch_autorotate, "arch graph auto-rotate");
                         ui.checkbox(&mut self.live, "live continuous mode");
+                        ui.checkbox(&mut self.show_floating_stats, "📊 floating stats window");
+                        ui.checkbox(
+                            &mut self.show_floating_minihelp,
+                            "⌨ floating shortcuts window",
+                        );
                         ui.add_space(theme::SPACE_SM);
                         ui.label(
                             egui::RichText::new("heatmap colormap")
@@ -2196,6 +2254,82 @@ impl eframe::App for App {
                             ));
                         }
                     });
+
+                    // Stack composition (#746): chain slots A → B → C → D.
+                    let occupied: Vec<usize> = self
+                        .slots
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, s)| if s.is_some() { Some(i) } else { None })
+                        .collect();
+                    if occupied.len() >= 2 {
+                        ui.add_space(theme::SPACE_MD);
+                        section_heading(ui, "Composition (chain)");
+                        ui.add_space(theme::SPACE_SM);
+                        card(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "Chain: input → {} → output",
+                                    occupied
+                                        .iter()
+                                        .map(|i| (b'A' + *i as u8) as char)
+                                        .collect::<String>()
+                                        .chars()
+                                        .map(|c| format!("[{c}]"))
+                                        .collect::<Vec<_>>()
+                                        .join(" → ")
+                                ))
+                                .size(theme::SIZE_SMALL)
+                                .color(theme::ACCENT_PURPLE)
+                                .strong(),
+                            );
+                            // Compute chained output: feed input → slot[0] → slot[1] → …
+                            let mut current = self.input.clone();
+                            let mut last_dim = self.dim;
+                            let mut chain_ok = true;
+                            for &i in &occupied {
+                                if let Some(s) = &self.slots[i] {
+                                    if s.dim() != current.dim() {
+                                        chain_ok = false;
+                                        break;
+                                    }
+                                    match s.forward(&current) {
+                                        Ok(out) => {
+                                            current = out;
+                                            last_dim = s.dim();
+                                        }
+                                        Err(_) => {
+                                            chain_ok = false;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            if chain_ok {
+                                let final_sim =
+                                    cos_sim(&self.input, &current).unwrap_or(0.0);
+                                ui.add_space(theme::SPACE_SM);
+                                metric(ui, "chain length", &occupied.len().to_string());
+                                metric(ui, "output dim", &last_dim.to_string());
+                                metric(
+                                    ui,
+                                    "cos_sim(input, chained)",
+                                    &format!("{final_sim:+.3}"),
+                                );
+                                ui.add_space(theme::SPACE_SM);
+                                cosine_similarity_bar(ui, final_sim);
+                            } else {
+                                ui.label(
+                                    egui::RichText::new(
+                                        "(slot dims don't align — can't chain)",
+                                    )
+                                    .color(theme::TEXT_DIM)
+                                    .italics()
+                                    .size(theme::SIZE_SMALL),
+                                );
+                            }
+                        });
+                    }
 
                     ui.add_space(theme::SPACE_MD);
                     section_heading(ui, "A/B compare");
@@ -2581,6 +2715,88 @@ impl eframe::App for App {
                     }); // close ScrollArea::vertical
             });
         } // show_left_panel
+
+        // Floating windows (#741) — Blender-style draggable/resizable.
+        if self.show_floating_stats {
+            let mut open = self.show_floating_stats;
+            egui::Window::new("📊 Live stats")
+                .open(&mut open)
+                .resizable(true)
+                .default_size([240.0, 200.0])
+                .frame(
+                    egui::Frame::none()
+                        .fill(theme::BG_CARD)
+                        .stroke(egui::Stroke::new(1.0, theme::ACCENT_BLUE))
+                        .rounding(egui::Rounding::same(theme::RADIUS_MD))
+                        .inner_margin(egui::Margin::same(theme::SPACE_MD)),
+                )
+                .show(ctx, |ui| {
+                    metric(ui, "template", self.template);
+                    metric(ui, "dim", &self.dim.to_string());
+                    metric(ui, "ops", &self.stack.len().to_string());
+                    metric(ui, "forwards", &self.forwards.to_string());
+                    if let Some(ms) = self.last_latency_ms {
+                        metric(ui, "last latency", &format!("{ms:.2} ms"));
+                    }
+                    if let Some(s) = self.last_cos_sim {
+                        metric(ui, "cos_sim(in,out)", &format!("{s:+.3}"));
+                    }
+                });
+            self.show_floating_stats = open;
+        }
+        if self.show_floating_minihelp {
+            let mut open = self.show_floating_minihelp;
+            egui::Window::new("⌨ Shortcuts")
+                .open(&mut open)
+                .resizable(true)
+                .default_size([300.0, 280.0])
+                .frame(
+                    egui::Frame::none()
+                        .fill(theme::BG_CARD)
+                        .stroke(egui::Stroke::new(1.0, theme::ACCENT_PURPLE))
+                        .rounding(egui::Rounding::same(theme::RADIUS_MD))
+                        .inner_margin(egui::Margin::same(theme::SPACE_MD)),
+                )
+                .show(ctx, |ui| {
+                    let entries = [
+                        ("Space", "run forward"),
+                        ("R", "regen input"),
+                        ("L", "live mode"),
+                        ("A / D / F", "+ id / dense / hrr"),
+                        ("P / N", "+ permute / negate"),
+                        ("Backspace", "remove selected"),
+                        ("1-0", "load template"),
+                        ("Tab", "toggle left panel"),
+                        ("⇧Tab", "toggle right panel"),
+                        ("⌘S / ⌘O", "save / load YAML"),
+                        ("⌘E", "PNG export"),
+                        ("⌘Z / ⌘⇧Z", "undo / redo"),
+                        ("`", "console"),
+                        ("H / F1", "help overlay"),
+                        ("Esc", "close modal"),
+                    ];
+                    egui::Grid::new("mini_help_grid")
+                        .num_columns(2)
+                        .spacing([theme::SPACE_LG, 2.0])
+                        .show(ui, |ui| {
+                            for (k, a) in entries {
+                                ui.label(
+                                    egui::RichText::new(k)
+                                        .color(theme::ACCENT_BLUE)
+                                        .monospace()
+                                        .strong(),
+                                );
+                                ui.label(
+                                    egui::RichText::new(a)
+                                        .color(theme::TEXT_PRIMARY)
+                                        .size(theme::SIZE_SMALL),
+                                );
+                                ui.end_row();
+                            }
+                        });
+                });
+            self.show_floating_minihelp = open;
+        }
 
         // Console / REPL pane (#747) — bottom-docked when shown.
         if self.show_console {
