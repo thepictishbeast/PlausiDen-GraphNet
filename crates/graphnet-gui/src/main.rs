@@ -5595,6 +5595,19 @@ fn architecture_graph_3d(
     let cy = rect.center().y;
     let scale = ((rect.width().min(rect.height()) * 0.32).min(180.0)) * zoom;
 
+    // Dotted grid backdrop for spatial reference (depth perception).
+    let grid_spacing = 24.0;
+    let grid_color = egui::Color32::from_rgb(0x1C, 0x22, 0x32);
+    let mut gx = rect.min.x + (grid_spacing / 2.0);
+    while gx < rect.max.x {
+        let mut gy = rect.min.y + (grid_spacing / 2.0);
+        while gy < rect.max.y {
+            painter.circle_filled(egui::pos2(gx, gy), 0.75, grid_color);
+            gy += grid_spacing;
+        }
+        gx += grid_spacing;
+    }
+
     // Perspective project a 3D point (x,y,z) → 2D screen point.
     // Apply yaw (Y axis) then pitch (X axis) then perspective.
     let project = |x: f32, y: f32, z: f32| -> (egui::Pos2, f32) {
