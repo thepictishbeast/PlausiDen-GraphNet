@@ -1,0 +1,519 @@
+//! Generic NeuralGraph — Phase 1 of GENERAL_AI_VISUALIZATION.md.
+//!
+//! The existing [`crate::Stack`] models ONE flavor of architecture: parallel
+//! operations sharing an input, bundled into a single output. To represent
+//! arbitrary networks (transformer, CNN, RNN, LLMs) we need a generic DAG
+//! where nodes are layers, edges are tensor connections, and the kind of
+//! layer is data-driven.
+//!
+//! Phase 1 surface (this file):
+//!
+//! - [`NeuralGraph`] — top-level DAG with nodes + edges + metadata
+//! - [`Node`] / [`NodeKind`] — node types (Input, Output, Layer, HdcOp)
+//! - [`LayerKind`] — Dense / Conv2d / Attention / LSTM / Embedding / etc.
+//! - [`Edge`] — typed connection with shape
+//! - [`GraphMetadata`] — architecture name + parameter count
+//!
+//! No tensor execution in Phase 1 — that's Phase 4 (candle absorption).
+//! No UI here — that's Phase 2-3 (egui_node_graph for 2D, generalized
+//! arch_graph_3d for 3D).
+//!
+//! The existing [`crate::Stack`] is embeddable as a single
+//! [`LayerKind::Hdc`], so we can keep all current functionality while
+//! growing into general AI viz.
+//!
+//! BUG ASSUMPTION (Phase 1): graph cycles are not validated. A consumer
+//! that needs DAG semantics must call [`NeuralGraph::has_cycle`] before
+//! traversal. Phase 4 (execution) will enforce DAG at construction.
+
+use serde::{Deserialize, Serialize};
+
+use crate::Stack;
+
+/// Tensor element type — minimal Phase 1 set. Phase 4 grows this to match
+/// candle's `DType`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DType {
+    /// Bipolar (-1/+1) — the HDC native representation.
+    Bipolar,
+    /// 32-bit float — the default for most NN layers.
+    F32,
+    /// 16-bit float — common for quantized LLMs.
+    F16,
+    /// 32-bit signed integer — for token IDs in embeddings.
+    I32,
+}
+
+/// Tensor shape. Empty Vec = scalar.
+pub type Shape = Vec<usize>;
+
+/// A typed edge — what flows between two nodes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Edge {
+    /// Index of the source node in [`NeuralGraph::nodes`].
+    pub from: usize,
+    /// Index of the destination node.
+    pub to: usize,
+    /// Shape of the tensor on this edge.
+    pub shape: Shape,
+    /// Tensor element type.
+    pub dtype: DType,
+    /// Human-readable label ("logits", "attn", etc.).
+    pub label: String,
+}
+
+/// Pool kind for [`LayerKind::Pool`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PoolKind {
+    Max,
+    Avg,
+    Sum,
+}
+
+/// Activation kind for [`NodeKind::Activation`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ActKind {
+    Relu,
+    Gelu,
+    Silu,
+    Tanh,
+    Sigmoid,
+    Softmax,
+}
+
+/// What kind of layer this node represents. Each variant carries its
+/// dimensions / hyperparameters but NOT the weight tensors themselves —
+/// weights live in the `params` field of [`Node::Layer`] (Phase 4 will
+/// promote these to candle Tensors).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum LayerKind {
+    /// Fully-connected: `out = input @ W + b`.
+    Dense { in_dim: usize, out_dim: usize },
+    /// 2D convolution.
+    Conv2d {
+        in_channels: usize,
+        out_channels: usize,
+        kernel: (usize, usize),
+        stride: (usize, usize),
+    },
+    /// Multi-head self-attention block.
+    Attention {
+        n_heads: usize,
+        head_dim: usize,
+        masked: bool,
+    },
+    /// Long short-term memory.
+    Lstm { hidden: usize, num_layers: usize },
+    /// Gated recurrent unit.
+    Gru { hidden: usize, num_layers: usize },
+    /// Token embedding lookup.
+    Embedding { vocab: usize, dim: usize },
+    /// Layer normalization.
+    LayerNorm,
+    /// Batch normalization.
+    BatchNorm,
+    /// Spatial pooling.
+    Pool {
+        kind: PoolKind,
+        kernel: (usize, usize),
+        stride: (usize, usize),
+    },
+    /// Dropout (parameter-free, kept for graph-completeness).
+    Dropout { p: f32 },
+    /// Reshape / view — no parameters, just shape change.
+    Reshape { from: Shape, to: Shape },
+    /// HDC stack — wraps the existing [`Stack`] as one layer kind. Lets
+    /// every current GraphNet feature keep working unchanged.
+    Hdc { stack: Stack },
+    /// Custom / user-defined — opaque kind with a label.
+    Custom { name: String },
+}
+
+impl LayerKind {
+    /// Estimate the number of learnable parameters in this layer.
+    ///
+    /// BUG ASSUMPTION: parameter counts are rough — they ignore biases,
+    /// gates that share weights, factorized attention, etc. Use as a UI
+    /// hint, not a source of truth. Phase 4 will compute exact counts
+    /// from loaded candle weights.
+    #[must_use]
+    pub fn param_count(&self) -> usize {
+        match self {
+            LayerKind::Dense { in_dim, out_dim } => in_dim * out_dim + out_dim,
+            LayerKind::Conv2d {
+                in_channels,
+                out_channels,
+                kernel: (kh, kw),
+                ..
+            } => in_channels * out_channels * kh * kw + out_channels,
+            LayerKind::Attention { n_heads, head_dim, .. } => {
+                // q + k + v + out projections, each n_heads * head_dim ^ 2.
+                4 * n_heads * head_dim * head_dim
+            }
+            LayerKind::Lstm { hidden, num_layers } => {
+                // 4 gates × (in + hidden + bias). Approximate in = hidden.
+                4 * num_layers * (hidden * hidden + hidden * hidden + hidden)
+            }
+            LayerKind::Gru { hidden, num_layers } => {
+                3 * num_layers * (hidden * hidden + hidden * hidden + hidden)
+            }
+            LayerKind::Embedding { vocab, dim } => vocab * dim,
+            LayerKind::LayerNorm | LayerKind::BatchNorm => 2, // gamma + beta scalars
+            LayerKind::Pool { .. } | LayerKind::Dropout { .. } | LayerKind::Reshape { .. } => {
+                0
+            }
+            LayerKind::Hdc { stack } => {
+                // Each Dense / HrrBind op has a key of `stack.dim()` bipolar bits.
+                stack.dim() * stack.len()
+            }
+            LayerKind::Custom { .. } => 0,
+        }
+    }
+
+    /// Short kind tag for display ("dense", "conv2d", "attention", ...).
+    #[must_use]
+    pub fn tag(&self) -> &'static str {
+        match self {
+            LayerKind::Dense { .. } => "dense",
+            LayerKind::Conv2d { .. } => "conv2d",
+            LayerKind::Attention { .. } => "attention",
+            LayerKind::Lstm { .. } => "lstm",
+            LayerKind::Gru { .. } => "gru",
+            LayerKind::Embedding { .. } => "embedding",
+            LayerKind::LayerNorm => "layernorm",
+            LayerKind::BatchNorm => "batchnorm",
+            LayerKind::Pool { .. } => "pool",
+            LayerKind::Dropout { .. } => "dropout",
+            LayerKind::Reshape { .. } => "reshape",
+            LayerKind::Hdc { .. } => "hdc",
+            LayerKind::Custom { .. } => "custom",
+        }
+    }
+}
+
+/// What a node represents.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum NodeKind {
+    /// Network input (tensor placeholder).
+    Input { shape: Shape, dtype: DType },
+    /// Network output.
+    Output { shape: Shape, dtype: DType },
+    /// A layer (with kind + optional learned weights).
+    Layer {
+        kind: LayerKind,
+        /// Whether the UI should render this layer's internals (sub-nodes)
+        /// rather than as a single block. Defaults false.
+        expanded: bool,
+    },
+    /// A point-wise activation.
+    Activation { kind: ActKind },
+}
+
+/// A node in the graph.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Node {
+    /// What this node represents.
+    pub kind: NodeKind,
+    /// Human-readable label.
+    pub label: String,
+}
+
+impl Node {
+    /// Convenience: input placeholder.
+    #[must_use]
+    pub fn input(shape: Shape, dtype: DType, label: impl Into<String>) -> Self {
+        Self {
+            kind: NodeKind::Input { shape, dtype },
+            label: label.into(),
+        }
+    }
+
+    /// Convenience: output placeholder.
+    #[must_use]
+    pub fn output(shape: Shape, dtype: DType, label: impl Into<String>) -> Self {
+        Self {
+            kind: NodeKind::Output { shape, dtype },
+            label: label.into(),
+        }
+    }
+
+    /// Convenience: layer.
+    #[must_use]
+    pub fn layer(kind: LayerKind, label: impl Into<String>) -> Self {
+        Self {
+            kind: NodeKind::Layer {
+                kind,
+                expanded: false,
+            },
+            label: label.into(),
+        }
+    }
+
+    /// Convenience: activation.
+    #[must_use]
+    pub fn activation(kind: ActKind, label: impl Into<String>) -> Self {
+        Self {
+            kind: NodeKind::Activation { kind },
+            label: label.into(),
+        }
+    }
+
+    /// Estimated parameter count of this node.
+    #[must_use]
+    pub fn param_count(&self) -> usize {
+        match &self.kind {
+            NodeKind::Layer { kind, .. } => kind.param_count(),
+            _ => 0,
+        }
+    }
+}
+
+/// Top-level graph metadata.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GraphMetadata {
+    /// Architecture family name ("GPT-2-small", "ResNet-18", ...).
+    pub family: String,
+    /// Optional source URL / file path.
+    pub source: Option<String>,
+    /// Notes / description.
+    pub notes: String,
+}
+
+/// A neural-net DAG.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct NeuralGraph {
+    /// All nodes in deterministic order. Indices are stable.
+    pub nodes: Vec<Node>,
+    /// Edges (typed connections between nodes).
+    pub edges: Vec<Edge>,
+    /// Architecture metadata.
+    pub metadata: GraphMetadata,
+}
+
+impl NeuralGraph {
+    /// New empty graph.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Append a node, return its index.
+    pub fn add_node(&mut self, node: Node) -> usize {
+        self.nodes.push(node);
+        self.nodes.len() - 1
+    }
+
+    /// Append an edge.
+    pub fn add_edge(&mut self, edge: Edge) {
+        self.edges.push(edge);
+    }
+
+    /// Total parameter count across all layer nodes (rough estimate).
+    #[must_use]
+    pub fn total_params(&self) -> usize {
+        self.nodes.iter().map(Node::param_count).sum()
+    }
+
+    /// Count of nodes by kind tag (for the architecture summary chip row).
+    #[must_use]
+    pub fn kind_counts(&self) -> std::collections::BTreeMap<&'static str, usize> {
+        let mut counts: std::collections::BTreeMap<&'static str, usize> =
+            std::collections::BTreeMap::new();
+        for node in &self.nodes {
+            let tag = match &node.kind {
+                NodeKind::Input { .. } => "input",
+                NodeKind::Output { .. } => "output",
+                NodeKind::Layer { kind, .. } => kind.tag(),
+                NodeKind::Activation { .. } => "activation",
+            };
+            *counts.entry(tag).or_insert(0) += 1;
+        }
+        counts
+    }
+
+    /// Detect cycles via DFS. Returns the first cycle found as a list of
+    /// node indices in cycle order, or None.
+    ///
+    /// BUG ASSUMPTION: graph cycles break DAG-traversal assumptions. UIs
+    /// rendering this graph should call this once after deserializing /
+    /// loading and refuse to execute if a cycle is found.
+    #[must_use]
+    pub fn has_cycle(&self) -> bool {
+        use std::collections::HashSet;
+        let n = self.nodes.len();
+        let mut visited = HashSet::new();
+        let mut on_stack = HashSet::new();
+        let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for e in &self.edges {
+            if e.from < n {
+                adj[e.from].push(e.to);
+            }
+        }
+        fn dfs(
+            v: usize,
+            adj: &[Vec<usize>],
+            visited: &mut std::collections::HashSet<usize>,
+            on_stack: &mut std::collections::HashSet<usize>,
+        ) -> bool {
+            if !visited.insert(v) {
+                return on_stack.contains(&v);
+            }
+            on_stack.insert(v);
+            for &w in &adj[v] {
+                if w < adj.len() && dfs(w, adj, visited, on_stack) {
+                    return true;
+                }
+            }
+            on_stack.remove(&v);
+            false
+        }
+        for start in 0..n {
+            if !visited.contains(&start)
+                && dfs(start, &adj, &mut visited, &mut on_stack)
+            {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_graph() {
+        let g = NeuralGraph::new();
+        assert_eq!(g.nodes.len(), 0);
+        assert_eq!(g.edges.len(), 0);
+        assert_eq!(g.total_params(), 0);
+        assert!(!g.has_cycle());
+    }
+
+    #[test]
+    fn dense_layer_param_count() {
+        // 768→3072 GELU MLP block: 768*3072 + 3072 = 2_362_368
+        let d = LayerKind::Dense {
+            in_dim: 768,
+            out_dim: 3072,
+        };
+        assert_eq!(d.param_count(), 768 * 3072 + 3072);
+    }
+
+    #[test]
+    fn gpt2_small_attention_estimate() {
+        // GPT-2 small: 12 heads × head_dim 64. 4 × 12 × 64² = 196_608.
+        let a = LayerKind::Attention {
+            n_heads: 12,
+            head_dim: 64,
+            masked: true,
+        };
+        assert_eq!(a.param_count(), 4 * 12 * 64 * 64);
+    }
+
+    #[test]
+    fn embedding_param_count() {
+        // GPT-2 small wte: 50257 × 768
+        let e = LayerKind::Embedding {
+            vocab: 50257,
+            dim: 768,
+        };
+        assert_eq!(e.param_count(), 50257 * 768);
+    }
+
+    #[test]
+    fn hdc_layer_wraps_existing_stack() {
+        use crate::Operation;
+        let stack = Stack::new(1000)
+            .with_operation(Operation::Identity)
+            .with_operation(Operation::Identity);
+        let layer = LayerKind::Hdc { stack };
+        assert_eq!(layer.tag(), "hdc");
+        // 2 ops × 1000 dim — rough estimate for param_count.
+        assert_eq!(layer.param_count(), 2000);
+    }
+
+    #[test]
+    fn simple_dag_no_cycle() {
+        let mut g = NeuralGraph::new();
+        let input = g.add_node(Node::input(vec![1, 768], DType::F32, "x"));
+        let dense = g.add_node(Node::layer(
+            LayerKind::Dense {
+                in_dim: 768,
+                out_dim: 3072,
+            },
+            "fc1",
+        ));
+        let output = g.add_node(Node::output(vec![1, 3072], DType::F32, "y"));
+        g.add_edge(Edge {
+            from: input,
+            to: dense,
+            shape: vec![1, 768],
+            dtype: DType::F32,
+            label: "x".to_string(),
+        });
+        g.add_edge(Edge {
+            from: dense,
+            to: output,
+            shape: vec![1, 3072],
+            dtype: DType::F32,
+            label: "y".to_string(),
+        });
+        assert!(!g.has_cycle());
+        assert_eq!(g.total_params(), 768 * 3072 + 3072);
+    }
+
+    #[test]
+    fn cycle_detected() {
+        let mut g = NeuralGraph::new();
+        let a = g.add_node(Node::layer(
+            LayerKind::LayerNorm,
+            "a",
+        ));
+        let b = g.add_node(Node::layer(
+            LayerKind::LayerNorm,
+            "b",
+        ));
+        g.add_edge(Edge {
+            from: a,
+            to: b,
+            shape: vec![],
+            dtype: DType::F32,
+            label: "".to_string(),
+        });
+        g.add_edge(Edge {
+            from: b,
+            to: a,
+            shape: vec![],
+            dtype: DType::F32,
+            label: "".to_string(),
+        });
+        assert!(g.has_cycle());
+    }
+
+    #[test]
+    fn kind_counts_aggregates() {
+        let mut g = NeuralGraph::new();
+        g.add_node(Node::input(vec![1, 768], DType::F32, "x"));
+        g.add_node(Node::layer(
+            LayerKind::Dense {
+                in_dim: 768,
+                out_dim: 3072,
+            },
+            "fc1",
+        ));
+        g.add_node(Node::layer(
+            LayerKind::Dense {
+                in_dim: 3072,
+                out_dim: 768,
+            },
+            "fc2",
+        ));
+        g.add_node(Node::activation(ActKind::Gelu, "gelu"));
+        let counts = g.kind_counts();
+        assert_eq!(counts.get("input"), Some(&1));
+        assert_eq!(counts.get("dense"), Some(&2));
+        assert_eq!(counts.get("activation"), Some(&1));
+    }
+}

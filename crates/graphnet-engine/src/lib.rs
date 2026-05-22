@@ -18,6 +18,7 @@
 
 pub mod backend;
 pub mod continuous;
+pub mod general_graph;
 pub mod history;
 pub mod intervene;
 pub mod logging;
